@@ -88,6 +88,35 @@ jobs:
           }
           KOT
 
+      # daftarkan folder assets/ di pubspec (jika belum)
+      - name: Daftarkan assets
+        run: |
+          grep -q "assets:" pubspec.yaml || sed -i 's|^  uses-material-design: true|  uses-material-design: true\n  assets:\n    - assets/|' pubspec.yaml
+
+      # ikon aplikasi dari assets/logo_icon.jpg
+      - name: Pasang ikon aplikasi
+        run: |
+          if [ -f assets/logo_icon.jpg ]; then
+            command -v convert >/dev/null || sudo apt-get install -y imagemagick
+            R=android/app/src/main/res
+            for d in mdpi:48:108 hdpi:72:162 xhdpi:96:216 xxhdpi:144:324 xxxhdpi:192:432; do
+              IFS=: read n a b <<< "$d"
+              i=$((b * 66 / 100))
+              mkdir -p $R/mipmap-$n
+              convert assets/logo_icon.jpg -resize ${a}x${a} $R/mipmap-$n/ic_launcher.png
+              convert assets/logo_icon.jpg -resize ${i}x${i} -background '#0B2038' -gravity center -extent ${b}x${b} $R/mipmap-$n/ic_launcher_foreground.png
+            done
+            mkdir -p $R/mipmap-anydpi-v26 $R/values
+            cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+            <background android:drawable="@color/ic_launcher_background"/>
+            <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          XML
+            echo '<resources><color name="ic_launcher_background">#0B2038</color></resources>' > $R/values/ic_launcher_background.xml
+          fi
+
       - run: flutter pub get
 
       - run: flutter build apk --release
