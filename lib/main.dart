@@ -467,8 +467,23 @@ class App {
     _recCache.clear();
   }
 
+  static bool statsOk = false, _sb = false;
+  static int _sl = 0;
+  static List<Map<String, String>> info = [];
+  static Timer? _poll;
+
   static Future<void> load() async {
     error = null;
+    // statistik & pengumuman dari cache dulu, lalu diambil paralel
+    try {
+      final sc = Store.p.getString('stats');
+      if (sc != null) applyStats(jsonDecode(sc) as Map);
+      final ic = Store.p.getString('info');
+      if (ic != null) applyInfo(jsonDecode(ic));
+    } catch (_) {}
+    loadStats(force: true);
+    loadInfo();
+    startPoll();
     final c = Store.p.getString('cache');
     if (c != null && !loaded) {
       try {
@@ -491,7 +506,6 @@ class App {
       if (!loaded) error = 'Gagal mengambil data. Periksa koneksi lalu coba lagi.';
     }
     refresh.value++;
-    loadStats();
   }
 
   static Map<String, int> _ints(Map m) => {
@@ -499,30 +513,80 @@ class App {
           e.key.toString(): (e.value is num) ? (e.value as num).toInt() : 0
       };
 
-  static Future<void> loadStats() async {
+  static void applyStats(Map d) {
+    if (d['v'] is! Map) return;
+    vc = _ints(d['v'] as Map);
+    wk = d['w'] is Map ? _ints(d['w'] as Map) : {};
+    if (d['r'] is Map) {
+      final m = <String, List<int>>{};
+      (d['r'] as Map).forEach((k, v) {
+        if (v is List && v.length >= 2) {
+          m[k.toString()] = [
+            (v[0] is num) ? (v[0] as num).toInt() : 0,
+            (v[1] is num) ? (v[1] as num).toInt() : 0
+          ];
+        }
+      });
+      rt = m;
+    }
+    statsOk = true;
+  }
+
+  static Future<void> loadStats({bool force = false}) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_sb || (!force && now - _sl < 8000)) return;
+    _sb = true;
+    for (var a = 0; a < 3; a++) {
+      try {
+        final r = await http
+            .get(Uri.parse('$api?stats=1&_=$now'))
+            .timeout(const Duration(seconds: 15));
+        final body = utf8.decode(r.bodyBytes);
+        final d = jsonDecode(body);
+        if (d is Map && d['v'] is Map) {
+          applyStats(d);
+          Store.p.setString('stats', body);
+          break;
+        }
+      } catch (_) {}
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    _sl = DateTime.now().millisecondsSinceEpoch;
+    _sb = false;
+    refresh.value++;
+  }
+
+  static void applyInfo(dynamic d) {
+    if (d is Map && d['info'] is List) {
+      info = (d['info'] as List)
+          .whereType<Map>()
+          .map((m) => {'t': s(m['t']), 'l': s(m['l'])})
+          .where((m) => m['t']!.isNotEmpty)
+          .toList();
+    }
+  }
+
+  static Future<void> loadInfo() async {
     try {
       final r = await http
-          .get(Uri.parse('$api?stats=1'))
-          .timeout(const Duration(seconds: 20));
-      final d = jsonDecode(utf8.decode(r.bodyBytes));
-      if (d is Map && d['v'] is Map) {
-        vc = _ints(d['v'] as Map);
-        wk = d['w'] is Map ? _ints(d['w'] as Map) : {};
-        if (d['r'] is Map) {
-          final m = <String, List<int>>{};
-          (d['r'] as Map).forEach((k, v) {
-            if (v is List && v.length >= 2) {
-              m[k.toString()] = [
-                (v[0] is num) ? (v[0] as num).toInt() : 0,
-                (v[1] is num) ? (v[1] as num).toInt() : 0
-              ];
-            }
-          });
-          rt = m;
-        }
+          .get(Uri.parse('$api?info=1'))
+          .timeout(const Duration(seconds: 15));
+      final body = utf8.decode(r.bodyBytes);
+      final d = jsonDecode(body);
+      if (d is Map && d['info'] is List) {
+        applyInfo(d);
+        Store.p.setString('info', body);
         refresh.value++;
       }
     } catch (_) {}
+  }
+
+  /// perbarui statistik & pengumuman tiap 60 detik
+  static void startPoll() {
+    _poll ??= Timer.periodic(const Duration(seconds: 60), (_) {
+      loadStats(force: true);
+      loadInfo();
+    });
   }
 
   static int views(String t) => vc[tkey(t)] ?? 0;
@@ -964,13 +1028,11 @@ BoxDecoration cardBox({double r = 16, Color? border}) => ultra
         borderRadius: BorderRadius.circular(r),
         border: Border.all(color: border ?? lineC));
 
-void openDetail(BuildContext c, Group g) => Navigator.push(
-        c, MaterialPageRoute(builder: (_) => DetailPage(g.title)))
-    .then((_) => App.refresh.value++);
+void openDetail(BuildContext c, Group g) =>
+    Navigator.push(c, pageR(DetailPage(g.title))).then((_) => App.refresh.value++);
 
 Future<void> playEp(BuildContext c, Ep e) =>
-    Navigator.push(c, MaterialPageRoute(builder: (_) => PlayerPage(e)))
-        .then((_) {
+    Navigator.push(c, pageR(PlayerPage(e))).then((_) {
       App.refresh.value++;
     });
 
@@ -979,7 +1041,7 @@ class GroupCard extends StatelessWidget {
   final double? width;
   const GroupCard(this.g, {this.width, super.key});
   @override
-  Widget build(BuildContext context) => GestureDetector(
+  Widget build(BuildContext context) => fxIn(Tap(
         onTap: () => openDetail(context, g),
         child: SizedBox(
           width: width,
@@ -1009,7 +1071,7 @@ class GroupCard extends StatelessWidget {
                 style: const TextStyle(fontSize: 13, height: 1.25)),
           ]),
         ),
-      );
+      ));
 }
 
 Widget section(String title, List<Widget> kids,
@@ -1171,6 +1233,332 @@ class GlowBg extends StatelessWidget {
   }
 }
 
+/* ===================== EFEK: LITE / ULTRA ===================== */
+double get navPad => ultra ? 112.0 : 20.0;
+
+Widget blurW({required Widget child, double s = 18, BorderRadius? r}) {
+  if (!ultra) return child;
+  return ClipRRect(
+      borderRadius: r ?? BorderRadius.zero,
+      child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: s, sigmaY: s), child: child));
+}
+
+/// muncul pelan (hanya Ultra)
+Widget fxIn(Widget c) => !ultra
+    ? c
+    : TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        builder: (_, v, ch) => Opacity(
+            opacity: v,
+            child: Transform.translate(offset: Offset(0, (1 - v) * 16), child: ch)),
+        child: c,
+      );
+
+/// tombol/kartu: mengecil sedikit saat ditekan (hanya Ultra)
+class Tap extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  const Tap({required this.child, this.onTap, super.key});
+  @override
+  State<Tap> createState() => _TapS();
+}
+
+class _TapS extends State<Tap> {
+  bool d = false;
+  void _s(bool v) {
+    if (ultra && d != v) setState(() => d = v);
+  }
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTapDown: (_) => _s(true),
+        onTapUp: (_) => _s(false),
+        onTapCancel: () => _s(false),
+        onTap: widget.onTap,
+        child: AnimatedScale(
+            scale: d ? .95 : 1,
+            duration: const Duration(milliseconds: 120),
+            child: widget.child),
+      );
+}
+
+/// latar tema (cahaya warna) di belakang halaman Detail & Pemutar
+class GlowShell extends StatelessWidget {
+  final Widget child;
+  const GlowShell(this.child, {super.key});
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        ColoredBox(color: bgc),
+        const Positioned.fill(child: GlowBg()),
+        Theme(
+            data: Theme.of(context)
+                .copyWith(scaffoldBackgroundColor: Colors.transparent),
+            child: child),
+      ]);
+}
+
+Route<T> pageR<T>(Widget w) {
+  final pg = GlowShell(w);
+  if (!ultra) return MaterialPageRoute<T>(builder: (_) => pg);
+  return PageRouteBuilder<T>(
+    transitionDuration: const Duration(milliseconds: 380),
+    reverseTransitionDuration: const Duration(milliseconds: 280),
+    pageBuilder: (_, __, ___) => pg,
+    transitionsBuilder: (_, a, __, c) {
+      final cv = CurvedAnimation(parent: a, curve: Curves.easeOutCubic);
+      return FadeTransition(
+          opacity: cv,
+          child: SlideTransition(
+              position: Tween(begin: const Offset(0, .05), end: Offset.zero)
+                  .animate(cv),
+              child: c));
+    },
+  );
+}
+
+const navDest = [
+  NavigationDestination(
+      icon: Icon(Icons.home_outlined),
+      selectedIcon: Icon(Icons.home),
+      label: 'Beranda'),
+  NavigationDestination(
+      icon: Icon(Icons.star_outline),
+      selectedIcon: Icon(Icons.star),
+      label: 'Populer'),
+  NavigationDestination(
+      icon: Icon(Icons.grid_view),
+      selectedIcon: Icon(Icons.grid_view_rounded),
+      label: 'Katalog'),
+  NavigationDestination(
+      icon: Icon(Icons.bookmark_outline),
+      selectedIcon: Icon(Icons.bookmark),
+      label: 'Koleksi'),
+  NavigationDestination(
+      icon: Icon(Icons.person_outline),
+      selectedIcon: Icon(Icons.person),
+      label: 'Profil'),
+];
+
+/// navigasi bawah: kaca buram di mode Ultra
+Widget mainNav(int i, ValueChanged<int> on) {
+  if (!ultra) {
+    return NavigationBar(
+        selectedIndex: i, onDestinationSelected: on, destinations: navDest);
+  }
+  return ClipRect(
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+      child: NavigationBar(
+        selectedIndex: i,
+        onDestinationSelected: on,
+        destinations: navDest,
+        elevation: 0,
+        backgroundColor:
+            (isLight ? Colors.white : Colors.black).withOpacity(.38),
+      ),
+    ),
+  );
+}
+
+/// teks pengumuman berjalan: waktu global, jadi tidak pernah ter-reset
+final _mqSw = Stopwatch()..start();
+
+class Marquee extends StatefulWidget {
+  const Marquee({super.key});
+  @override
+  State<Marquee> createState() => _MarqueeS();
+}
+
+class _MarqueeS extends State<Marquee> with SingleTickerProviderStateMixin {
+  late final AnimationController c =
+      AnimationController(vsync: this, duration: const Duration(seconds: 1))
+        ..repeat();
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (App.info.isEmpty) return const SizedBox.shrink();
+    final txt = '${App.info.map((m) => m['t']!).join('      •      ')}            ';
+    final st = TextStyle(fontSize: 13, color: fg);
+    final tp = TextPainter(
+        text: TextSpan(text: txt, style: st),
+        textDirection: TextDirection.ltr,
+        maxLines: 1)
+      ..layout();
+    final w = max(tp.width, 40.0);
+    final link = App.info.map((m) => m['l']!).firstWhere((l) => l.isNotEmpty,
+        orElse: () => '');
+    return GestureDetector(
+      onTap: link.isEmpty ? null : () => openUrl(link),
+      child: Container(
+        height: 38,
+        padding: const EdgeInsets.only(left: 12),
+        decoration: cardBox(r: 14),
+        child: Row(children: [
+          const Text('📢', style: TextStyle(fontSize: 15)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ClipRect(
+              child: LayoutBuilder(
+                builder: (_, bc) {
+                  final n = (bc.maxWidth / w).ceil() + 1;
+                  return AnimatedBuilder(
+                    animation: c,
+                    builder: (_, __) {
+                      final off = (_mqSw.elapsedMilliseconds * 0.045) % w;
+                      return OverflowBox(
+                        alignment: Alignment.centerLeft,
+                        minWidth: 0,
+                        maxWidth: double.infinity,
+                        child: Transform.translate(
+                          offset: Offset(-off, 0),
+                          child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                for (var k = 0; k < n; k++)
+                                  Text(txt,
+                                      style: st,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      overflow: TextOverflow.visible),
+                              ]),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// volume & kecerahan asli perangkat lewat kode native (Kotlin)
+const _nat = MethodChannel('lesehan/native');
+
+class Gest {
+  static double vol = .5, bri = .5;
+  static Future<void> init() async {
+    try {
+      vol = ((await _nat.invokeMethod('getVolume')) as num).toDouble();
+      bri = ((await _nat.invokeMethod('getBrightness')) as num).toDouble();
+    } catch (_) {}
+  }
+
+  static void setVol(double v) {
+    vol = v.clamp(0.0, 1.0);
+    _nat.invokeMethod('setVolume', vol).catchError((_) {});
+  }
+
+  static void setBri(double v) {
+    bri = v.clamp(0.01, 1.0);
+    _nat.invokeMethod('setBrightness', bri).catchError((_) {});
+  }
+
+  static void resetBri() {
+    _nat.invokeMethod('setBrightness', -1.0).catchError((_) {});
+  }
+}
+
+/// geser vertikal: kiri = kecerahan, kanan = volume
+class GestLayer extends StatefulWidget {
+  final Widget child;
+  const GestLayer({required this.child, super.key});
+  @override
+  State<GestLayer> createState() => _GestS();
+}
+
+class _GestS extends State<GestLayer> {
+  bool left = false, show = false;
+  double val = 0;
+  Timer? _h;
+
+  @override
+  void initState() {
+    super.initState();
+    Gest.init();
+  }
+
+  @override
+  void dispose() {
+    _h?.cancel();
+    super.dispose();
+  }
+
+  void _pop() {
+    setState(() => show = true);
+    _h?.cancel();
+    _h = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) setState(() => show = false);
+    });
+  }
+
+  Widget _ind() => Container(
+        width: 170,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+            color: Colors.black.withOpacity(.68),
+            borderRadius: BorderRadius.circular(16)),
+        child: Row(children: [
+          Icon(
+              left
+                  ? Icons.brightness_6
+                  : (val <= 0 ? Icons.volume_off : Icons.volume_up),
+              color: Colors.white,
+              size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+              child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                      value: val,
+                      minHeight: 6,
+                      color: accent,
+                      backgroundColor: Colors.white24))),
+          const SizedBox(width: 8),
+          Text('${(val * 100).round()}',
+              style: const TextStyle(color: Colors.white, fontSize: 12)),
+        ]),
+      );
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (_, bc) => Listener(
+          onPointerDown: (_) => Gest.init(),
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragStart: (d) {
+              left = d.localPosition.dx < bc.maxWidth / 2;
+              val = left ? Gest.bri : Gest.vol;
+            },
+            onVerticalDragUpdate: (d) {
+              val = (val - d.delta.dy / (bc.maxHeight * .75)).clamp(0.0, 1.0);
+              if (left) {
+                Gest.setBri(val);
+              } else {
+                Gest.setVol(val);
+              }
+              _pop();
+            },
+            child: Stack(alignment: Alignment.center, children: [
+              Positioned.fill(child: widget.child),
+              if (show) IgnorePointer(child: _ind()),
+            ]),
+          ),
+        ),
+      );
+}
+
 /* ===================== APLIKASI ===================== */
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1207,6 +1595,7 @@ class _RootState extends State<Root> {
   int i = App.tab.value;
   void _tabL() {
     if (mounted) setState(() => i = App.tab.value);
+    if (App.tab.value <= 1) App.loadStats();
   }
 
   @override
@@ -1243,57 +1632,45 @@ class _RootState extends State<Root> {
     final ok = RegExp(r'^https?://', caseSensitive: false).hasMatch(lk);
     showDialog(
       context: context,
-      builder: (c) => Dialog(
-        backgroundColor: isLight ? Colors.white : const Color(0xFF121216),
-        insetPadding: const EdgeInsets.all(18),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Flexible(
-              child: GestureDetector(
-                onTap: ok
-                    ? () {
-                        Navigator.pop(c);
-                        openUrl(lk);
-                      }
-                    : null,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: CachedNetworkImage(
-                    imageUrl: img,
-                    fit: BoxFit.contain,
-                    placeholder: (_, __) => const SizedBox(
-                        height: 160,
-                        child: Center(child: CircularProgressIndicator())),
-                    errorWidget: (_, __, ___) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (c.mounted) Navigator.pop(c);
-                      });
-                      return const SizedBox.shrink();
-                    },
+      barrierColor: Colors.black.withOpacity(.8),
+      builder: (c) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (ok) openUrl(lk);
+          Navigator.pop(c);
+        },
+        child: Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Flexible(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: CachedNetworkImage(
+                        imageUrl: img,
+                        fit: BoxFit.contain,
+                        placeholder: (_, __) => const SizedBox(
+                            height: 160,
+                            child: Center(child: CircularProgressIndicator())),
+                        errorWidget: (_, __, ___) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (c.mounted) Navigator.pop(c);
+                          });
+                          return const SizedBox.shrink();
+                        },
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 16),
+                  const Text('ketuk di mana saja untuk menutup',
+                      style: TextStyle(color: Colors.white70, fontSize: 13)),
+                ]),
               ),
             ),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(
-                  child: OutlinedButton(
-                      onPressed: () => Navigator.pop(c),
-                      child: const Text('Tutup'))),
-              if (ok) ...[
-                const SizedBox(width: 10),
-                Expanded(
-                    child: FilledButton(
-                        onPressed: () {
-                          Navigator.pop(c);
-                          openUrl(lk);
-                        },
-                        child: const Text('Buka'))),
-              ],
-            ]),
-          ]),
+          ),
         ),
       ),
     );
@@ -1333,36 +1710,500 @@ class _RootState extends State<Root> {
             ]);
           }
           return Scaffold(
+            extendBody: ultra,
             body: Stack(children: [
               const Positioned.fill(child: GlowBg()),
-              SafeArea(child: body),
+              SafeArea(bottom: !ultra, child: body),
             ]),
-            bottomNavigationBar: NavigationBar(
-              selectedIndex: i,
-              onDestinationSelected: (v) => App.tab.value = v,
-              destinations: const [
-                NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home),
-                    label: 'Beranda'),
-                NavigationDestination(
-                    icon: Icon(Icons.star_outline),
-                    selectedIcon: Icon(Icons.star),
-                    label: 'Populer'),
-                NavigationDestination(
-                    icon: Icon(Icons.grid_view),
-                    selectedIcon: Icon(Icons.grid_view_rounded),
-                    label: 'Katalog'),
-                NavigationDestination(
-                    icon: Icon(Icons.bookmark_outline),
-                    selectedIcon: Icon(Icons.bookmark),
-                    label: 'Koleksi'),
-                NavigationDestination(
-                    icon: Icon(Icons.person_outline),
-                    selectedIcon: Icon(Icons.person),
-                    label: 'Profil'),
-              ],
+            bottomNavigationBar: mainNav(i, (v) => App.tab.value = v),
+          );
+        },
+      );
+}
+
+/* ===================== EFEK: LITE / ULTRA ===================== */
+double get navPad => ultra ? 112.0 : 20.0;
+
+Widget blurW({required Widget child, double s = 18, BorderRadius? r}) {
+  if (!ultra) return child;
+  return ClipRRect(
+      borderRadius: r ?? BorderRadius.zero,
+      child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: s, sigmaY: s), child: child));
+}
+
+/// muncul pelan (hanya Ultra)
+Widget fxIn(Widget c) => !ultra
+    ? c
+    : TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        builder: (_, v, ch) => Opacity(
+            opacity: v,
+            child: Transform.translate(offset: Offset(0, (1 - v) * 16), child: ch)),
+        child: c,
+      );
+
+/// tombol/kartu: mengecil sedikit saat ditekan (hanya Ultra)
+class Tap extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  const Tap({required this.child, this.onTap, super.key});
+  @override
+  State<Tap> createState() => _TapS();
+}
+
+class _TapS extends State<Tap> {
+  bool d = false;
+  void _s(bool v) {
+    if (ultra && d != v) setState(() => d = v);
+  }
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTapDown: (_) => _s(true),
+        onTapUp: (_) => _s(false),
+        onTapCancel: () => _s(false),
+        onTap: widget.onTap,
+        child: AnimatedScale(
+            scale: d ? .95 : 1,
+            duration: const Duration(milliseconds: 120),
+            child: widget.child),
+      );
+}
+
+/// latar tema (cahaya warna) di belakang halaman Detail & Pemutar
+class GlowShell extends StatelessWidget {
+  final Widget child;
+  const GlowShell(this.child, {super.key});
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        ColoredBox(color: bgc),
+        const Positioned.fill(child: GlowBg()),
+        Theme(
+            data: Theme.of(context)
+                .copyWith(scaffoldBackgroundColor: Colors.transparent),
+            child: child),
+      ]);
+}
+
+Route<T> pageR<T>(Widget w) {
+  final pg = GlowShell(w);
+  if (!ultra) return MaterialPageRoute<T>(builder: (_) => pg);
+  return PageRouteBuilder<T>(
+    transitionDuration: const Duration(milliseconds: 380),
+    reverseTransitionDuration: const Duration(milliseconds: 280),
+    pageBuilder: (_, __, ___) => pg,
+    transitionsBuilder: (_, a, __, c) {
+      final cv = CurvedAnimation(parent: a, curve: Curves.easeOutCubic);
+      return FadeTransition(
+          opacity: cv,
+          child: SlideTransition(
+              position: Tween(begin: const Offset(0, .05), end: Offset.zero)
+                  .animate(cv),
+              child: c));
+    },
+  );
+}
+
+const navDest = [
+  NavigationDestination(
+      icon: Icon(Icons.home_outlined),
+      selectedIcon: Icon(Icons.home),
+      label: 'Beranda'),
+  NavigationDestination(
+      icon: Icon(Icons.star_outline),
+      selectedIcon: Icon(Icons.star),
+      label: 'Populer'),
+  NavigationDestination(
+      icon: Icon(Icons.grid_view),
+      selectedIcon: Icon(Icons.grid_view_rounded),
+      label: 'Katalog'),
+  NavigationDestination(
+      icon: Icon(Icons.bookmark_outline),
+      selectedIcon: Icon(Icons.bookmark),
+      label: 'Koleksi'),
+  NavigationDestination(
+      icon: Icon(Icons.person_outline),
+      selectedIcon: Icon(Icons.person),
+      label: 'Profil'),
+];
+
+/// navigasi bawah: kaca buram di mode Ultra
+Widget mainNav(int i, ValueChanged<int> on) {
+  if (!ultra) {
+    return NavigationBar(
+        selectedIndex: i, onDestinationSelected: on, destinations: navDest);
+  }
+  return ClipRect(
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+      child: NavigationBar(
+        selectedIndex: i,
+        onDestinationSelected: on,
+        destinations: navDest,
+        elevation: 0,
+        backgroundColor:
+            (isLight ? Colors.white : Colors.black).withOpacity(.38),
+      ),
+    ),
+  );
+}
+
+/// teks pengumuman berjalan: waktu global, jadi tidak pernah ter-reset
+final _mqSw = Stopwatch()..start();
+
+class Marquee extends StatefulWidget {
+  const Marquee({super.key});
+  @override
+  State<Marquee> createState() => _MarqueeS();
+}
+
+class _MarqueeS extends State<Marquee> with SingleTickerProviderStateMixin {
+  late final AnimationController c =
+      AnimationController(vsync: this, duration: const Duration(seconds: 1))
+        ..repeat();
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (App.info.isEmpty) return const SizedBox.shrink();
+    final txt = '${App.info.map((m) => m['t']!).join('      •      ')}            ';
+    final st = TextStyle(fontSize: 13, color: fg);
+    final tp = TextPainter(
+        text: TextSpan(text: txt, style: st),
+        textDirection: TextDirection.ltr,
+        maxLines: 1)
+      ..layout();
+    final w = max(tp.width, 40.0);
+    final link = App.info.map((m) => m['l']!).firstWhere((l) => l.isNotEmpty,
+        orElse: () => '');
+    return GestureDetector(
+      onTap: link.isEmpty ? null : () => openUrl(link),
+      child: Container(
+        height: 38,
+        padding: const EdgeInsets.only(left: 12),
+        decoration: cardBox(r: 14),
+        child: Row(children: [
+          const Text('📢', style: TextStyle(fontSize: 15)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ClipRect(
+              child: LayoutBuilder(
+                builder: (_, bc) {
+                  final n = (bc.maxWidth / w).ceil() + 1;
+                  return AnimatedBuilder(
+                    animation: c,
+                    builder: (_, __) {
+                      final off = (_mqSw.elapsedMilliseconds * 0.045) % w;
+                      return OverflowBox(
+                        alignment: Alignment.centerLeft,
+                        minWidth: 0,
+                        maxWidth: double.infinity,
+                        child: Transform.translate(
+                          offset: Offset(-off, 0),
+                          child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                for (var k = 0; k < n; k++)
+                                  Text(txt,
+                                      style: st,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      overflow: TextOverflow.visible),
+                              ]),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// volume & kecerahan asli perangkat lewat kode native (Kotlin)
+const _nat = MethodChannel('lesehan/native');
+
+class Gest {
+  static double vol = .5, bri = .5;
+  static Future<void> init() async {
+    try {
+      vol = ((await _nat.invokeMethod('getVolume')) as num).toDouble();
+      bri = ((await _nat.invokeMethod('getBrightness')) as num).toDouble();
+    } catch (_) {}
+  }
+
+  static void setVol(double v) {
+    vol = v.clamp(0.0, 1.0);
+    _nat.invokeMethod('setVolume', vol).catchError((_) {});
+  }
+
+  static void setBri(double v) {
+    bri = v.clamp(0.01, 1.0);
+    _nat.invokeMethod('setBrightness', bri).catchError((_) {});
+  }
+
+  static void resetBri() {
+    _nat.invokeMethod('setBrightness', -1.0).catchError((_) {});
+  }
+}
+
+/// geser vertikal: kiri = kecerahan, kanan = volume
+class GestLayer extends StatefulWidget {
+  final Widget child;
+  const GestLayer({required this.child, super.key});
+  @override
+  State<GestLayer> createState() => _GestS();
+}
+
+class _GestS extends State<GestLayer> {
+  bool left = false, show = false;
+  double val = 0;
+  Timer? _h;
+
+  @override
+  void initState() {
+    super.initState();
+    Gest.init();
+  }
+
+  @override
+  void dispose() {
+    _h?.cancel();
+    super.dispose();
+  }
+
+  void _pop() {
+    setState(() => show = true);
+    _h?.cancel();
+    _h = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) setState(() => show = false);
+    });
+  }
+
+  Widget _ind() => Container(
+        width: 170,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+            color: Colors.black.withOpacity(.68),
+            borderRadius: BorderRadius.circular(16)),
+        child: Row(children: [
+          Icon(
+              left
+                  ? Icons.brightness_6
+                  : (val <= 0 ? Icons.volume_off : Icons.volume_up),
+              color: Colors.white,
+              size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+              child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                      value: val,
+                      minHeight: 6,
+                      color: accent,
+                      backgroundColor: Colors.white24))),
+          const SizedBox(width: 8),
+          Text('${(val * 100).round()}',
+              style: const TextStyle(color: Colors.white, fontSize: 12)),
+        ]),
+      );
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (_, bc) => Listener(
+          onPointerDown: (_) => Gest.init(),
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragStart: (d) {
+              left = d.localPosition.dx < bc.maxWidth / 2;
+              val = left ? Gest.bri : Gest.vol;
+            },
+            onVerticalDragUpdate: (d) {
+              val = (val - d.delta.dy / (bc.maxHeight * .75)).clamp(0.0, 1.0);
+              if (left) {
+                Gest.setBri(val);
+              } else {
+                Gest.setVol(val);
+              }
+              _pop();
+            },
+            child: Stack(alignment: Alignment.center, children: [
+              Positioned.fill(child: widget.child),
+              if (show) IgnorePointer(child: _ind()),
+            ]),
+          ),
+        ),
+      );
+}
+
+/* ===================== APLIKASI ===================== */
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Store.init();
+  final sv = Store.p.getString('theme');
+  curTh = themes.firstWhere((t) => t.id == sv, orElse: () => themes[0]);
+  themeId.value = curTh.id;
+  perfN.value = Store.p.getString('perf') == 'ultra' ? 'ultra' : 'lite';
+  runApp(const LesehanApp());
+}
+
+class LesehanApp extends StatelessWidget {
+  const LesehanApp({super.key});
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Listenable.merge([themeId, perfN]),
+        builder: (_, __) => MaterialApp(
+          key: ValueKey('${themeId.value}-${perfN.value}'),
+          title: 'LesehanTV',
+          debugShowCheckedModeBanner: false,
+          theme: buildTheme(),
+          home: const Root(),
+        ),
+      );
+}
+
+class Root extends StatefulWidget {
+  const Root({super.key});
+  @override
+  State<Root> createState() => _RootState();
+}
+
+class _RootState extends State<Root> {
+  int i = App.tab.value;
+  void _tabL() {
+    if (mounted) setState(() => i = App.tab.value);
+    if (App.tab.value <= 1) App.loadStats();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    App.tab.addListener(_tabL);
+    if (!App.started) {
+      App.started = true;
+      App.load();
+    }
+  }
+
+  @override
+  void dispose() {
+    App.tab.removeListener(_tabL);
+    super.dispose();
+  }
+
+  Future<void> _popup() async {
+    final pp = App.popup;
+    if (pp == null || App.popDone) return;
+    final img = pp['img']!, lk = pp['link']!, mode = pp['mode']!;
+    final st = Store.jm('popup');
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    if (mode != 'selalu' &&
+        st['img'] == img &&
+        (mode != 'harian' || st['d'] == today)) {
+      return;
+    }
+    App.popDone = true;
+    Store.sj('popup', {'img': img, 'd': today});
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (!mounted) return;
+    final ok = RegExp(r'^https?://', caseSensitive: false).hasMatch(lk);
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(.8),
+      builder: (c) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (ok) openUrl(lk);
+          Navigator.pop(c);
+        },
+        child: Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Flexible(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: CachedNetworkImage(
+                        imageUrl: img,
+                        fit: BoxFit.contain,
+                        placeholder: (_, __) => const SizedBox(
+                            height: 160,
+                            child: Center(child: CircularProgressIndicator())),
+                        errorWidget: (_, __, ___) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (c.mounted) Navigator.pop(c);
+                          });
+                          return const SizedBox.shrink();
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('ketuk di mana saja untuk menutup',
+                      style: TextStyle(color: Colors.white70, fontSize: 13)),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+        valueListenable: App.refresh,
+        builder: (_, __, ___) {
+          Widget body;
+          if (!App.loaded) {
+            body = Center(
+              child: App.error != null
+                  ? Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(App.error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 14),
+                      FilledButton(
+                          onPressed: () {
+                            App.error = null;
+                            App.refresh.value++;
+                            App.load();
+                          },
+                          child: const Text('Muat Ulang')),
+                    ])
+                  : const CircularProgressIndicator(),
+            );
+          } else {
+            if (!App.popDone && App.popup != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _popup());
+            }
+            body = IndexedStack(index: i, children: [
+              HomeTab(),
+              PopularTab(),
+              CatalogTab(),
+              LibraryTab(),
+              ProfileTab(),
+            ]);
+          }
+          return Scaffold(
+            extendBody: ultra,
+            body: Stack(children: [
+              const Positioned.fill(child: GlowBg()),
+              SafeArea(bottom: !ultra, child: body),
+            ]),
+            bottomNavigationBar: mainNav(i, (v) => App.tab.value = v),
           );
         },
       );
@@ -1450,7 +2291,7 @@ class _HomeTabState extends State<HomeTab> {
       ['movie', 'Film'],
     ];
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+      padding: EdgeInsets.fromLTRB(14, 12, 14, navPad),
       children: [
         Row(children: [
           Container(
@@ -1476,6 +2317,10 @@ class _HomeTabState extends State<HomeTab> {
               onPressed: () => App.tab.value = 2,
               icon: Icon(Icons.search, color: accent, size: 26)),
         ]),
+        if (App.info.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Marquee(),
+        ],
         const SizedBox(height: 14),
         if (hero.isNotEmpty)
           SizedBox(
@@ -1644,7 +2489,7 @@ class _PopularTabState extends State<PopularTab> {
       ..sort((a, b) => b.value.compareTo(a.value));
     final top = l.take(30).toList();
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+      padding: EdgeInsets.fromLTRB(14, 14, 14, navPad),
       children: [
         const Text('🔥 Populer',
             style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
@@ -1656,12 +2501,19 @@ class _PopularTabState extends State<PopularTab> {
         ]),
         const SizedBox(height: 12),
         if (top.isEmpty)
-          const Padding(
-              padding: EdgeInsets.all(30),
-              child: Center(child: Text('Belum ada data penonton.')))
+          Padding(
+              padding: const EdgeInsets.all(30),
+              child: Center(
+                  child: App.statsOk
+                      ? const Text('Belum ada data penonton.')
+                      : const Column(mainAxisSize: MainAxisSize.min, children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 12),
+                          Text('Memuat data populer…'),
+                        ])))
         else
           for (var i = 0; i < top.length; i++)
-            GestureDetector(
+            Tap(
               onTap: () => openDetail(context, top[i].key),
               child: Container(
                 margin: const EdgeInsets.only(bottom: 10),
@@ -1779,7 +2631,7 @@ class _CatalogTabState extends State<CatalogTab> {
               ? const Center(child: Text('Tidak ada konten yang cocok.'))
               : LayoutBuilder(
                   builder: (_, c) => GridView.builder(
-                    padding: const EdgeInsets.only(bottom: 16),
+                    padding: EdgeInsets.only(bottom: navPad),
                     itemCount: l.length,
                     gridDelegate: gridD(c.maxWidth),
                     itemBuilder: (_, i) => GroupCard(l[i]),
@@ -1800,7 +2652,7 @@ class LibraryTab extends StatelessWidget {
     final hs =
         Store.hist.map((h) => App.byKey[h['key']]).whereType<Ep>().toList();
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+      padding: EdgeInsets.fromLTRB(14, 14, 14, navPad),
       children: [
         const Text('Bookmark',
             style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
@@ -1949,6 +2801,43 @@ class ProfileTab extends StatelessWidget {
     );
   }
 
+  Widget _pm(String id, String label) {
+    final on = perfN.value == id;
+    return GestureDetector(
+      onTap: () => setPerf(id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+            color: on ? accent.withOpacity(.2) : fg.withOpacity(.05),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: on ? accent : lineC, width: on ? 1.5 : 1)),
+        child: Text(label,
+            style: TextStyle(
+                fontWeight: FontWeight.w600, color: on ? accent : fg)),
+      ),
+    );
+  }
+
+  Widget _perf() => Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(14),
+        decoration: cardBox(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Mode Tampilan',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text('Lite: ringan & hemat baterai. Ultra: animasi penuh dengan efek kaca.',
+              style: TextStyle(color: mut, fontSize: 12, height: 1.5)),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: _pm('lite', '⚡ Lite')),
+            const SizedBox(width: 10),
+            Expanded(child: _pm('ultra', '✨ Ultra')),
+          ]),
+        ]),
+      );
+
   Widget _theme() => Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
         padding: const EdgeInsets.all(14),
@@ -2008,7 +2897,7 @@ class ProfileTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListView(
-        padding: const EdgeInsets.fromLTRB(14, 20, 14, 24),
+        padding: EdgeInsets.fromLTRB(14, 20, 14, navPad + 4),
         children: [
           Center(
             child: Container(
@@ -2053,6 +2942,7 @@ class ProfileTab extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _lv(),
+          _perf(),
           _theme(),
           const SizedBox(height: 8),
           GestureDetector(
@@ -2482,6 +3372,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           autoPlay: true,
           aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
           allowedScreenSleep: false,
+          routePageBuilder: (c, a, sa, prov) => AnimatedBuilder(
+              animation: a,
+              builder: (_, __) => Scaffold(
+                  resizeToAvoidBottomInset: false,
+                  backgroundColor: Colors.black,
+                  body: GestLayer(child: prov))),
           deviceOrientationsOnEnterFullScreen: [
             DeviceOrientation.landscapeLeft,
             DeviceOrientation.landscapeRight
@@ -2554,6 +3450,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _tok++;
     _release();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    Gest.resetBri();
     super.dispose();
   }
 
@@ -2639,7 +3536,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ]),
       );
     }
-    if (cc != null) return Chewie(controller: cc!);
+    if (cc != null) return GestLayer(child: Chewie(controller: cc!));
     if (wc != null) return WebViewWidget(controller: wc!);
     return const SizedBox.shrink();
   }
