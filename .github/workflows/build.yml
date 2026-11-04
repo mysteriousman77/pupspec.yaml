@@ -30,6 +30,64 @@ jobs:
           sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application android:usesCleartextTraffic="true"|' $M
           sed -i 's|android:label="[^"]*"|android:label="LesehanTV"|' $M
 
+      # kode native: volume & kecerahan asli perangkat
+      - name: Write native MainActivity
+        run: |
+          D=android/app/src/main/kotlin/com/lesehantv/lesehantv
+          mkdir -p $D
+          find android/app/src/main -name 'MainActivity.*' -delete
+          cat > $D/MainActivity.kt <<'KOT'
+          package com.lesehantv.lesehantv
+
+          import android.content.Context
+          import android.media.AudioManager
+          import android.provider.Settings
+          import android.view.WindowManager
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lesehan/native")
+                      .setMethodCallHandler { call, result ->
+                          val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                          val mx = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                          when (call.method) {
+                              "getVolume" -> result.success(
+                                  if (mx > 0) am.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / mx else 0.0)
+                              "setVolume" -> {
+                                  val v = (call.arguments as Number).toDouble()
+                                  am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(v * mx).toInt(), 0)
+                                  result.success(null)
+                              }
+                              "getBrightness" -> {
+                                  val b = window.attributes.screenBrightness
+                                  if (b >= 0) {
+                                      result.success(b.toDouble())
+                                  } else {
+                                      val s = try {
+                                          Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+                                      } catch (e: Exception) { 128 }
+                                      result.success(s / 255.0)
+                                  }
+                              }
+                              "setBrightness" -> {
+                                  val v = (call.arguments as Number).toDouble()
+                                  val lp = window.attributes
+                                  lp.screenBrightness = if (v < 0) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                                      else v.coerceIn(0.01, 1.0).toFloat()
+                                  window.attributes = lp
+                                  result.success(null)
+                              }
+                              else -> result.notImplemented()
+                          }
+                      }
+              }
+          }
+          KOT
+
       - run: flutter pub get
 
       - run: flutter build apk --release
