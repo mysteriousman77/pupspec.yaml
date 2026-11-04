@@ -15,6 +15,6 @@ dependencies:
   chewie: ^1.8.1
   webview_flutter: ^4.7.0
   cached_network_image: ^3.3.1
-
+  url_launcher: ^6.2.5
 flutter:
   uses-material-design: true
