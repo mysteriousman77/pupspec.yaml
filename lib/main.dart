@@ -1188,7 +1188,6 @@ class GlowBg extends StatelessWidget {
   }
 }
 
-
 /* ===================== EFEK: LITE / ULTRA ===================== */
 double get navPad => ultra ? 112.0 : 20.0;
 
@@ -1619,6 +1618,218 @@ class _GestS extends State<GestLayer> {
       );
 }
 
+/* ===================== SPLASH ===================== */
+const _spBg = Color(0xFF0C2340);
+const _spGold1 = Color(0xFFE3A653);
+const _spGold2 = Color(0xFFB8732A);
+
+class LogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.width / 2;
+    final sh = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [_spGold1, _spGold2])
+        .createShader(Offset.zero & size);
+    final sw = size.width * .028;
+    canvas.drawCircle(
+        c,
+        r - sw,
+        Paint()
+          ..shader = sh
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = sw);
+    Path tri(double k) {
+      final cx = c.dx - r * .06, cy = c.dy;
+      return Path()
+        ..moveTo(cx - r * .33 * k, cy - r * .42 * k)
+        ..lineTo(cx - r * .33 * k, cy + r * .42 * k)
+        ..lineTo(cx + r * .46 * k, cy)
+        ..close();
+    }
+
+    final big = tri(1);
+    canvas.drawPath(
+        big,
+        Paint()
+          ..shader = sh
+          ..style = PaintingStyle.fill);
+    canvas.drawPath(
+        big,
+        Paint()
+          ..shader = sh
+          ..style = PaintingStyle.stroke
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = r * .16);
+    canvas.drawPath(tri(.5), Paint()..color = _spBg);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter old) => false;
+}
+
+class SplashLogo extends StatelessWidget {
+  const SplashLogo({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: _spBg,
+        body: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 1100),
+              curve: Curves.easeOutBack,
+              builder: (_, v, __) => Opacity(
+                opacity: v.clamp(0.0, 1.0),
+                child: Transform.scale(
+                  scale: .6 + .4 * v,
+                  child: Container(
+                    width: 132,
+                    height: 132,
+                    decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [
+                      BoxShadow(
+                          color: _spGold2.withOpacity(.35 * v), blurRadius: 40)
+                    ]),
+                    child: CustomPaint(painter: LogoPainter()),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 26),
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 900),
+              curve: Curves.easeOut,
+              builder: (_, v, ch) => Opacity(
+                  opacity: v,
+                  child: Transform.translate(
+                      offset: Offset(0, (1 - v) * 14), child: ch)),
+              child: Column(children: [
+                Text.rich(
+                  const TextSpan(children: [
+                    TextSpan(
+                        text: 'Lesehan',
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w800)),
+                    TextSpan(
+                        text: 'TV',
+                        style: TextStyle(
+                            color: _spGold1, fontWeight: FontWeight.w400)),
+                  ]),
+                  style: const TextStyle(fontSize: 34, letterSpacing: .5),
+                ),
+                const SizedBox(height: 6),
+                const Text('Streaming Santai di Mana Saja',
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ]),
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: 150,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: const LinearProgressIndicator(
+                    minHeight: 3,
+                    color: _spGold1,
+                    backgroundColor: Colors.white12),
+              ),
+            ),
+          ]),
+        ),
+      );
+}
+
+/// splash: memutar assets/splash.mp4 sekali; selesai -> masuk (menunggu data siap)
+class Splash extends StatefulWidget {
+  final VoidCallback onDone;
+  const Splash({required this.onDone, super.key});
+  @override
+  State<Splash> createState() => _SplashS();
+}
+
+class _SplashS extends State<Splash> {
+  VideoPlayerController? v;
+  bool ok = false, fin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final c = VideoPlayerController.asset('assets/splash.mp4');
+      v = c;
+      await c.initialize();
+      await c.setVolume(0);
+      c.addListener(_tick);
+      await c.play();
+      if (mounted) setState(() => ok = true);
+    } catch (_) {
+      Future.delayed(const Duration(milliseconds: 2200), _end);
+    }
+  }
+
+  void _tick() {
+    final x = v!.value;
+    if (x.hasError) return _end();
+    if (x.isInitialized &&
+        x.duration.inMilliseconds > 0 &&
+        x.position >= x.duration - const Duration(milliseconds: 200)) {
+      _end();
+    }
+  }
+
+  void _end() {
+    if (fin) return;
+    fin = true;
+    if (mounted) setState(() {});
+    widget.onDone();
+  }
+
+  @override
+  void dispose() {
+    v?.removeListener(_tick);
+    v?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!ok) return const SplashLogo();
+    final s = v!.value.size;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(fit: StackFit.expand, children: [
+        FittedBox(
+          fit: BoxFit.cover,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+              width: s.width, height: s.height, child: VideoPlayer(v!)),
+        ),
+        if (fin)
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 60,
+            child: Center(
+              child: SizedBox(
+                width: 150,
+                child: LinearProgressIndicator(
+                    minHeight: 3,
+                    color: _spGold1,
+                    backgroundColor: Colors.white12),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
 /* ===================== APLIKASI ===================== */
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1649,6 +1860,8 @@ class Root extends StatefulWidget {
   @override
   State<Root> createState() => _RootState();
 }
+
+bool _splashDone = false;
 
 class _RootState extends State<Root> {
   int i = App.tab.value;
@@ -1739,6 +1952,12 @@ class _RootState extends State<Root> {
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
         valueListenable: App.refresh,
         builder: (_, __, ___) {
+          if (!_splashDone || (!App.loaded && App.error == null)) {
+            return Splash(onDone: () {
+              _splashDone = true;
+              if (mounted) setState(() {});
+            });
+          }
           Widget body;
           if (!App.loaded) {
             body = Center(
@@ -2546,15 +2765,13 @@ class ProfileTab extends StatelessWidget {
               height: 120,
               decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(28),
-                  gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [accent, curTh.g2]),
                   boxShadow: [
                     BoxShadow(color: accent.withOpacity(.45), blurRadius: 26)
                   ]),
-              child: const Icon(Icons.play_arrow_rounded,
-                  size: 76, color: Colors.white),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: Image.asset('assets/logo_icon.jpg', fit: BoxFit.cover),
+              ),
             ),
           ),
           const SizedBox(height: 12),
