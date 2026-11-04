@@ -94,6 +94,8 @@ class App {
   static bool loaded = false;
   static String? error;
   static final refresh = ValueNotifier<int>(0);
+  static final tab = ValueNotifier<int>(0);
+  static final catReq = ValueNotifier<String>('');
 
   static void ingest(List raw) {
     final out = <Ep>[];
@@ -334,11 +336,11 @@ Widget poster(String url, {double radius = 14}) => ClipRRect(
             ),
     );
 
-Widget pill(String t) => Container(
+Widget pill(String t, {bool up = true}) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
           color: Colors.black54, borderRadius: BorderRadius.circular(6)),
-      child: Text(t.toUpperCase(),
+      child: Text(up ? t.toUpperCase() : t,
           style: const TextStyle(
               fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white)),
     );
@@ -389,13 +391,27 @@ class GroupCard extends StatelessWidget {
       );
 }
 
-Widget section(String title, List<Widget> kids, {double h = 165}) => Column(
+Widget section(String title, List<Widget> kids,
+        {double h = 165, VoidCallback? more}) =>
+    Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(2, 18, 2, 10),
-          child: Text(title,
-              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w500)),
+          child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 19, fontWeight: FontWeight.w500)),
+                if (more != null)
+                  GestureDetector(
+                      onTap: more,
+                      child: const Text('Lihat Semua ›',
+                          style: TextStyle(color: accent, fontSize: 13))),
+              ]),
         ),
         SizedBox(
           height: h,
@@ -408,6 +424,110 @@ Widget section(String title, List<Widget> kids, {double h = 165}) => Column(
         ),
       ],
     );
+
+/// grid dengan tinggi sel pasti (poster 16:9 + judul 2 baris), tidak ada celah kosong
+SliverGridDelegate gridD(double w) {
+  final cols = w >= 700 ? 4 : (w >= 480 ? 3 : 2);
+  final cw = (w - 12 * (cols - 1)) / cols;
+  return SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: cols,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 14,
+      mainAxisExtent: cw * 9 / 16 + 6 + 36);
+}
+
+void goCat(String c) {
+  App.catReq.value = c;
+  App.tab.value = 2;
+}
+
+Widget outlined(String t, double size) => Stack(children: [
+      Text(t,
+          style: TextStyle(
+              fontSize: size,
+              fontWeight: FontWeight.w900,
+              height: .8,
+              letterSpacing: -6,
+              foreground: Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 3
+                ..color = accent)),
+      Text(t,
+          style: TextStyle(
+              fontSize: size,
+              fontWeight: FontWeight.w900,
+              height: .8,
+              letterSpacing: -6,
+              color: bgc)),
+    ]);
+
+Widget t10Item(BuildContext c, int i, Group g, int v) {
+  final n = '${i + 1}';
+  final two = n.length > 1;
+  final nw = two ? 128.0 : 72.0;
+  return GestureDetector(
+    onTap: () => openDetail(c, g),
+    child: SizedBox(
+      width: nw + 126,
+      height: 190,
+      child: Stack(clipBehavior: Clip.none, children: [
+        Positioned(left: 0, bottom: -4, child: outlined(n, two ? 112 : 150)),
+        Positioned(
+          left: nw,
+          top: 0,
+          width: 126,
+          height: 188,
+          child: Stack(fit: StackFit.expand, children: [
+            poster(g.thumb, radius: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.center,
+                      colors: [Colors.black87, Colors.transparent]),
+                ),
+              ),
+            ),
+            Positioned(top: 7, right: 7, child: pill('👁 ${fv(v)}', up: false)),
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 7,
+              child: Text(g.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w600, height: 1.25)),
+            ),
+          ]),
+        ),
+      ]),
+    ),
+  );
+}
+
+/// latar dengan cahaya warna lembut seperti versi web
+class GlowBg extends StatelessWidget {
+  const GlowBg({super.key});
+  Widget _g(Alignment a, Color c, double o) => Positioned.fill(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+                center: a, radius: .95, colors: [c.withOpacity(o), Colors.transparent]),
+          ),
+        ),
+      );
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+        child: Stack(children: [
+          _g(const Alignment(-1, -1), accent, .26),
+          _g(const Alignment(1, -.3), const Color(0xFF7846FF), .20),
+          _g(const Alignment(-1, .8), const Color(0xFF0096FF), .16),
+        ]),
+      );
+}
 
 /* ===================== APLIKASI ===================== */
 Future<void> main() async {
@@ -426,10 +546,20 @@ class LesehanApp extends StatelessWidget {
           useMaterial3: true,
           brightness: Brightness.dark,
           scaffoldBackgroundColor: bgc,
-          colorScheme: const ColorScheme.dark(primary: accent, surface: cardc),
+          colorScheme: const ColorScheme.dark(
+              primary: accent, secondary: accent, surface: cardc),
+          chipTheme: ChipThemeData(
+            backgroundColor: Colors.white.withOpacity(.06),
+            selectedColor: accent,
+            checkmarkColor: Colors.white,
+            side: BorderSide(color: Colors.white.withOpacity(.14)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            labelStyle: const TextStyle(
+                color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+          ),
           navigationBarTheme: NavigationBarThemeData(
-            backgroundColor: const Color(0xFF101014),
-            indicatorColor: accent.withOpacity(.25),
+            backgroundColor: const Color(0xFF0C0C10),
+            indicatorColor: accent.withOpacity(.28),
           ),
         ),
         home: const Root(),
@@ -444,10 +574,21 @@ class Root extends StatefulWidget {
 
 class _RootState extends State<Root> {
   int i = 0;
+  void _tabL() {
+    if (mounted) setState(() => i = App.tab.value);
+  }
+
   @override
   void initState() {
     super.initState();
+    App.tab.addListener(_tabL);
     App.load();
+  }
+
+  @override
+  void dispose() {
+    App.tab.removeListener(_tabL);
+    super.dispose();
   }
 
   @override
@@ -480,10 +621,13 @@ class _RootState extends State<Root> {
             ]);
           }
           return Scaffold(
-            body: SafeArea(child: body),
+            body: Stack(children: [
+              const Positioned.fill(child: GlowBg()),
+              SafeArea(child: body),
+            ]),
             bottomNavigationBar: NavigationBar(
               selectedIndex: i,
-              onDestinationSelected: (v) => setState(() => i = v),
+              onDestinationSelected: (v) => App.tab.value = v,
               destinations: const [
                 NavigationDestination(
                     icon: Icon(Icons.home_outlined),
@@ -519,6 +663,40 @@ class _HomeTabState extends State<HomeTab> {
   final pc = PageController();
   Timer? t;
   List<Group> hero = [];
+  int heroI = 0;
+
+  Widget top10() {
+    List<MapEntry<Group, int>> by(Map<String, int> m) => App.groups
+        .map((g) => MapEntry(g, m[tkey(g.title)] ?? 0))
+        .where((x) => x.value > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    var l = by(App.wk);
+    var week = true;
+    if (l.length < 3) {
+      l = by(App.vc);
+      week = false;
+    }
+    if (l.length < 3) return const SizedBox.shrink();
+    final top = l.take(10).toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(2, 18, 2, 10),
+        child: Text(week ? 'Top 10 Minggu Ini' : 'Top 10 Sepanjang Masa',
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w500)),
+      ),
+      SizedBox(
+        height: 200,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: top.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) =>
+              t10Item(context, i, top[i].key, top[i].value),
+        ),
+      ),
+    ]);
+  }
 
   @override
   void initState() {
@@ -558,11 +736,30 @@ class _HomeTabState extends State<HomeTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
       children: [
-        const Row(children: [
-          Icon(Icons.play_circle_fill, color: accent, size: 34),
-          SizedBox(width: 10),
-          Text('LesehanTV',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+        Row(children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: accent,
+                boxShadow: [
+                  BoxShadow(color: accent.withOpacity(.5), blurRadius: 14)
+                ]),
+            child: const Icon(Icons.play_arrow_rounded, size: 28),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Welcome',
+                  style: TextStyle(fontSize: 11, color: Colors.white60)),
+              Text('LesehanTV',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            ]),
+          ),
+          IconButton(
+              onPressed: () => App.tab.value = 2,
+              icon: const Icon(Icons.search, color: accent, size: 26)),
         ]),
         const SizedBox(height: 14),
         if (hero.isNotEmpty)
@@ -570,6 +767,7 @@ class _HomeTabState extends State<HomeTab> {
             height: 210,
             child: PageView(
               controller: pc,
+              onPageChanged: (v) => setState(() => heroI = v),
               children: hero
                   .map((g) => GestureDetector(
                         onTap: () => openDetail(context, g),
@@ -625,15 +823,35 @@ class _HomeTabState extends State<HomeTab> {
                   .toList(),
             ),
           ),
+        if (hero.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 9),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              for (var k = 0; k < hero.length; k++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                  width: k == heroI ? 20 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                      color: k == heroI ? accent : Colors.white24,
+                      borderRadius: BorderRadius.circular(3)),
+                ),
+            ]),
+          ),
         if (hs.isNotEmpty)
-          section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList()),
+          section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList(),
+              more: () => App.tab.value = 3),
+        top10(),
         section('Baru Ditambahkan',
-            latest.take(12).map((g) => GroupCard(g, width: 190)).toList()),
+            latest.take(12).map((g) => GroupCard(g, width: 190)).toList(),
+            more: () => goCat('all')),
         for (final k in kinds)
           Builder(builder: (_) {
             final l = latest.where((g) => kind(g.cat) == k[0]).take(12).toList();
             if (l.isEmpty) return const SizedBox.shrink();
-            return section(k[1], l.map((g) => GroupCard(g, width: 190)).toList());
+            return section(k[1], l.map((g) => GroupCard(g, width: 190)).toList(),
+                more: () => goCat(k[0]));
           }),
       ],
     );
@@ -777,6 +995,26 @@ class CatalogTab extends StatefulWidget {
 
 class _CatalogTabState extends State<CatalogTab> {
   String q = '', cat = 'all';
+
+  void _req() {
+    final v = App.catReq.value;
+    if (v.isEmpty) return;
+    App.catReq.value = '';
+    if (mounted) setState(() => cat = v);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    App.catReq.addListener(_req);
+  }
+
+  @override
+  void dispose() {
+    App.catReq.removeListener(_req);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = App.groups
@@ -828,14 +1066,13 @@ class _CatalogTabState extends State<CatalogTab> {
         Expanded(
           child: l.isEmpty
               ? const Center(child: Text('Tidak ada konten yang cocok.'))
-              : GridView.builder(
-                  itemCount: l.length,
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 240,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 1.1),
-                  itemBuilder: (_, i) => GroupCard(l[i]),
+              : LayoutBuilder(
+                  builder: (_, c) => GridView.builder(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    itemCount: l.length,
+                    gridDelegate: gridD(c.maxWidth),
+                    itemBuilder: (_, i) => GroupCard(l[i]),
+                  ),
                 ),
         ),
       ]),
@@ -861,16 +1098,14 @@ class LibraryTab extends StatelessWidget {
               padding: EdgeInsets.all(24),
               child: Center(child: Text('Belum ada yang di-bookmark.')))
         else
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: bm.length,
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 240,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.1),
-            itemBuilder: (_, i) => GroupCard(bm[i]),
+          LayoutBuilder(
+            builder: (_, c) => GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: bm.length,
+              gridDelegate: gridD(c.maxWidth),
+              itemBuilder: (_, i) => GroupCard(bm[i]),
+            ),
           ),
         const SizedBox(height: 20),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -1345,3 +1580,4 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 }
+
