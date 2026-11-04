@@ -61,13 +61,8 @@ Color get mut => isLight ? const Color(0xFF5B5E6B) : Colors.white60;
 Color get lineC => isLight ? Colors.black12 : Colors.white12;
 Color get onAc => accent.computeLuminance() > .45 ? Colors.black : Colors.white;
 
-/// mode performa: 'lite' (ringan) atau 'ultra' (animasi + kaca penuh)
-final perfN = ValueNotifier<String>('lite');
-bool get ultra => perfN.value == 'ultra';
-void setPerf(String m) {
-  Store.p.setString('perf', m);
-  perfN.value = m;
-}
+/// efek kaca & animasi penuh selalu aktif
+bool get ultra => true;
 
 void setTheme(String id) {
   curTh = themes.firstWhere((t) => t.id == id, orElse: () => themes[0]);
@@ -225,77 +220,6 @@ double simT(String a, String b) {
   b = cmpT(b);
   final l = max(a.length, b.length);
   return l == 0 ? 0 : 1 - lev(a, b) / l;
-}
-
-/* ===================== LEVEL KULTIVASI ===================== */
-class Realm {
-  final String name, emoji;
-  final Color c;
-  const Realm(this.name, this.emoji, this.c);
-}
-
-const rlb = [
-  Realm('Dou Zhe', '🥋', Color(0xFF9CA3AF)),
-  Realm('Dou Shi', '🔥', Color(0xFFFB923C)),
-  Realm('Da Dou Shi', '🌋', Color(0xFFF97316)),
-  Realm('Dou Ling', '👻', Color(0xFFA78BFA)),
-  Realm('Dou Wang', '👑', Color(0xFFFACC15)),
-  Realm('Dou Huang', '🐲', Color(0xFFF43F5E)),
-  Realm('Dou Zong', '🌀', Color(0xFF38BDF8)),
-  Realm('Dou Zun', '⚡', Color(0xFF34D399)),
-  Realm('Dou Sheng', '🌟', Color(0xFFE879F9)),
-  Realm('Dou Di', '🏯', Color(0xFFFDE047)),
-];
-const rlt = [
-  0, 15, 25, 45, 65, 90, 120, 155, 200, 250, 310, 390, 485, 600, 735, 900,
-  1090, 1320, 1605, 1950, 2360, 2860, 3465, 4205, 5115, 6195, 7495, 9100
-];
-const rlMax = 13000;
-
-class Stage {
-  final String name, emoji;
-  final Color c;
-  final int h, r;
-  const Stage(this.name, this.emoji, this.c, this.h, this.r);
-}
-
-final List<Stage> rlm = () {
-  final l = <Stage>[Stage(rlb[0].name, rlb[0].emoji, rlb[0].c, rlt[0], 0)];
-  for (var k = 1; k < rlb.length; k++) {
-    final b = rlb[k];
-    final t = 1 + (k - 1) * 3;
-    l.add(Stage('Ban Bu ${b.name}', b.emoji, b.c, rlt[t], k));
-    l.add(Stage(b.name, b.emoji, b.c, rlt[t + 1], k));
-    l.add(Stage('Puncak ${b.name}', b.emoji, b.c, rlt[t + 2], k));
-  }
-  return l;
-}();
-
-class LvInfo {
-  final int r, st, idx, left;
-  final double p, h;
-  final bool max, top;
-  const LvInfo(this.r, this.st, this.idx, this.left, this.p, this.h, this.max,
-      this.top);
-}
-
-LvInfo lvInfo(double sec) {
-  final h = sec / 3600;
-  var r = rlm.length - 1;
-  while (r > 0 && h < rlm[r].h) {
-    r--;
-  }
-  final lo = rlm[r].h.toDouble();
-  final hi = r < rlm.length - 1 ? rlm[r + 1].h.toDouble() : rlMax.toDouble();
-  final span = (hi - lo) / 9;
-  final mx = h >= hi;
-  var i = ((h - lo) / span).floor();
-  if (i > 8) i = 8;
-  if (i < 0) i = 0;
-  final p = mx ? 1.0 : (((h - lo) - i * span) / span).clamp(0.0, 1.0);
-  final left = mx ? 0 : ((lo + (i + 1) * span - h) * 3600).ceil();
-  return LvInfo(r, i + 1, r * 9 + i, left < 0 ? 0 : left, p, h, mx,
-      r == rlm.length - 1);
 }
 
 /* ===================== MODEL ===================== */
@@ -933,13 +857,34 @@ class Store {
     App.refresh.value++;
   }
 
+  /* ----- rekap tontonan (gaya Spotify Wrapped) ----- */
   static int get watchSec => p.getInt('lvsec') ?? 0;
-  static LvInfo? addWatch(int sec) {
-    final t0 = watchSec;
-    final a = lvInfo(t0.toDouble()).idx;
-    p.setInt('lvsec', t0 + sec);
-    final b = lvInfo((t0 + sec).toDouble());
-    return b.idx > a ? b : null;
+
+  static String dayKey(DateTime d) => d.toIso8601String().substring(0, 10);
+
+  static Map<String, int> wk(String bucket) {
+    final m = jm('wk')[bucket];
+    if (m is! Map) return {};
+    return m.map((k, v) => MapEntry(k.toString(), (v as num).toInt()));
+  }
+
+  static void addWatch(Ep e, int sec) {
+    p.setInt('lvsec', watchSec + sec);
+    final w = jm('wk');
+    void bump(String bucket, String k) {
+      if (k.isEmpty) return;
+      final m = Map<String, dynamic>.from((w[bucket] as Map?) ?? {});
+      m[k] = ((m[k] as num?)?.toInt() ?? 0) + sec;
+      w[bucket] = m;
+    }
+
+    bump('d', dayKey(DateTime.now()));
+    bump('t', e.title);
+    bump('c', e.cat);
+    for (final g in e.gen.split(RegExp(r'[,;|]'))) {
+      bump('g', g.trim());
+    }
+    sj('wk', w);
   }
 }
 
@@ -966,7 +911,7 @@ Widget pill(String t, {bool up = true}) => Container(
     );
 
 Widget chipB(String label, bool sel, VoidCallback onTap, {IconData? icon}) =>
-    GestureDetector(
+    Tap(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
@@ -1028,13 +973,23 @@ BoxDecoration cardBox({double r = 16, Color? border}) => ultra
         borderRadius: BorderRadius.circular(r),
         border: Border.all(color: border ?? lineC));
 
-void openDetail(BuildContext c, Group g) =>
-    Navigator.push(c, pageR(DetailPage(g.title))).then((_) => App.refresh.value++);
+void openDetail(BuildContext c, Group g) {
+  final pl = _PlayerPageState.top;
+  pl?.hold();
+  Navigator.push(c, pageR(DetailPage(g.title))).then((_) {
+    App.refresh.value++;
+    pl?.release();
+  });
+}
 
-Future<void> playEp(BuildContext c, Ep e) =>
-    Navigator.push(c, pageR(PlayerPage(e))).then((_) {
-      App.refresh.value++;
-    });
+Future<void> playEp(BuildContext c, Ep e) {
+  final pl = _PlayerPageState.top;
+  pl?.hold();
+  return Navigator.push(c, pageR(PlayerPage(e))).then((_) {
+    App.refresh.value++;
+    pl?.release();
+  });
+}
 
 class GroupCard extends StatelessWidget {
   final Group g;
@@ -1090,7 +1045,7 @@ Widget section(String title, List<Widget> kids,
                     style: const TextStyle(
                         fontSize: 19, fontWeight: FontWeight.w500)),
                 if (more != null)
-                  GestureDetector(
+                  Tap(
                       onTap: more,
                       child: Text('Lihat Semua ›',
                           style: TextStyle(color: accent, fontSize: 13))),
@@ -1160,7 +1115,7 @@ Widget t10Item(BuildContext c, int i, Group g, int v) {
   final n = '${i + 1}';
   final two = n.length > 1;
   final nw = two ? 128.0 : 72.0;
-  return GestureDetector(
+  return Tap(
     onTap: () => openDetail(c, g),
     child: SizedBox(
       width: nw + 126,
@@ -1233,6 +1188,7 @@ class GlowBg extends StatelessWidget {
   }
 }
 
+
 /* ===================== EFEK: LITE / ULTRA ===================== */
 double get navPad => ultra ? 112.0 : 20.0;
 
@@ -1257,7 +1213,7 @@ Widget fxIn(Widget c) => !ultra
         child: c,
       );
 
-/// tombol/kartu: mengecil sedikit saat ditekan (hanya Ultra)
+/// semua tombol/kartu: mengecil sedikit saat ditekan (Lite ringan, Ultra lebih terasa)
 class Tap extends StatefulWidget {
   final Widget child;
   final VoidCallback? onTap;
@@ -1269,7 +1225,7 @@ class Tap extends StatefulWidget {
 class _TapS extends State<Tap> {
   bool d = false;
   void _s(bool v) {
-    if (ultra && d != v) setState(() => d = v);
+    if (mounted && d != v) setState(() => d = v);
   }
 
   @override
@@ -1277,10 +1233,18 @@ class _TapS extends State<Tap> {
         onTapDown: (_) => _s(true),
         onTapUp: (_) => _s(false),
         onTapCancel: () => _s(false),
-        onTap: widget.onTap,
+        onTap: widget.onTap == null
+            ? null
+            : () {
+                // tap cepat tetap terlihat "memantul"
+                _s(true);
+                Future.delayed(const Duration(milliseconds: 110), () => _s(false));
+                widget.onTap!();
+              },
         child: AnimatedScale(
-            scale: d ? .95 : 1,
-            duration: const Duration(milliseconds: 120),
+            scale: d ? (ultra ? .94 : .96) : 1,
+            duration: const Duration(milliseconds: 110),
+            curve: Curves.easeOut,
             child: widget.child),
       );
 }
@@ -1319,48 +1283,142 @@ Route<T> pageR<T>(Widget w) {
   );
 }
 
-const navDest = [
-  NavigationDestination(
-      icon: Icon(Icons.home_outlined),
-      selectedIcon: Icon(Icons.home),
-      label: 'Beranda'),
-  NavigationDestination(
-      icon: Icon(Icons.star_outline),
-      selectedIcon: Icon(Icons.star),
-      label: 'Populer'),
-  NavigationDestination(
-      icon: Icon(Icons.grid_view),
-      selectedIcon: Icon(Icons.grid_view_rounded),
-      label: 'Katalog'),
-  NavigationDestination(
-      icon: Icon(Icons.bookmark_outline),
-      selectedIcon: Icon(Icons.bookmark),
-      label: 'Koleksi'),
-  NavigationDestination(
-      icon: Icon(Icons.person_outline),
-      selectedIcon: Icon(Icons.person),
-      label: 'Profil'),
+const _navIc = <List<Object>>[
+  [Icons.home_outlined, Icons.home_rounded, 'Beranda'],
+  [Icons.star_outline_rounded, Icons.star_rounded, 'Populer'],
+  [Icons.grid_view_outlined, Icons.grid_view_rounded, 'Katalog'],
+  [Icons.bookmark_outline_rounded, Icons.bookmark_rounded, 'Koleksi'],
+  [Icons.person_outline_rounded, Icons.person_rounded, 'Profil'],
 ];
 
-/// navigasi bawah: kaca buram di mode Ultra
-Widget mainNav(int i, ValueChanged<int> on) {
-  if (!ultra) {
-    return NavigationBar(
-        selectedIndex: i, onDestinationSelected: on, destinations: navDest);
-  }
-  return ClipRect(
-    child: BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-      child: NavigationBar(
-        selectedIndex: i,
-        onDestinationSelected: on,
-        destinations: navDest,
-        elevation: 0,
-        backgroundColor:
-            (isLight ? Colors.white : Colors.black).withOpacity(.38),
+/// navigasi bawah melayang berbahan kaca, indikator meluncur ke tab terpilih
+class FloatNav extends StatelessWidget {
+  final int i;
+  final ValueChanged<int> on;
+  const FloatNav(this.i, this.on, {super.key});
+
+  Widget _item(int k) {
+    final sel = k == i;
+    final ic = _navIc[k];
+    return Container(
+      color: Colors.transparent,
+      alignment: Alignment.center,
+      child: AnimatedScale(
+        scale: sel ? 1.08 : 1,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutBack,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+            child: Icon(sel ? ic[1] as IconData : ic[0] as IconData,
+                key: ValueKey(sel),
+                size: 24,
+                color: sel ? accent : mut),
+          ),
+          const SizedBox(height: 2),
+          AnimatedDefaultTextStyle(
+            duration: const Duration(milliseconds: 220),
+            style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                color: sel ? accent : mut),
+            child: Text(ic[2] as String),
+          ),
+        ]),
       ),
-    ),
-  );
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+        height: 68,
+        decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(34),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(.22),
+                  blurRadius: 22,
+                  offset: const Offset(0, 8))
+            ]),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(34),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: isLight
+                          ? [
+                              Colors.white.withOpacity(.8),
+                              Colors.white.withOpacity(.5)
+                            ]
+                          : [
+                              Colors.white.withOpacity(.18),
+                              Colors.black.withOpacity(.4)
+                            ]),
+                  borderRadius: BorderRadius.circular(34),
+                  border: Border.all(
+                      color: Colors.white.withOpacity(isLight ? .9 : .24))),
+              child: LayoutBuilder(builder: (_, bc) {
+                final w = bc.maxWidth / 5;
+                return Stack(children: [
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 420),
+                    curve: Curves.easeOutBack,
+                    left: i * w + 5,
+                    top: 7,
+                    width: w - 10,
+                    height: 52,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [
+                            accent.withOpacity(.34),
+                            accent.withOpacity(.14)
+                          ]),
+                          borderRadius: BorderRadius.circular(26),
+                          border: Border.all(color: accent.withOpacity(.55))),
+                    ),
+                  ),
+                  Row(children: [
+                    for (var k = 0; k < 5; k++)
+                      Expanded(child: Tap(onTap: () => on(k), child: _item(k))),
+                  ]),
+                ]);
+              }),
+            ),
+          ),
+        ),
+      );
+}
+
+/// pindah tab dengan geser + pudar (semua tab tetap hidup)
+class TabSwitch extends StatelessWidget {
+  final int index;
+  final List<Widget> children;
+  const TabSwitch({required this.index, required this.children, super.key});
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        for (var k = 0; k < children.length; k++)
+          IgnorePointer(
+            ignoring: k != index,
+            child: AnimatedSlide(
+              offset: k == index
+                  ? Offset.zero
+                  : Offset(k < index ? -.07 : .07, 0),
+              duration: const Duration(milliseconds: 340),
+              curve: Curves.easeOutCubic,
+              child: AnimatedOpacity(
+                opacity: k == index ? 1 : 0,
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.easeOut,
+                child: children[k],
+              ),
+            ),
+          ),
+      ]);
 }
 
 /// teks pengumuman berjalan: waktu global, jadi tidak pernah ter-reset
@@ -1395,7 +1453,7 @@ class _MarqueeS extends State<Marquee> with SingleTickerProviderStateMixin {
     final w = max(tp.width, 40.0);
     final link = App.info.map((m) => m['l']!).firstWhere((l) => l.isNotEmpty,
         orElse: () => '');
-    return GestureDetector(
+    return Tap(
       onTap: link.isEmpty ? null : () => openUrl(link),
       child: Container(
         height: 38,
@@ -1550,9 +1608,11 @@ class _GestS extends State<GestLayer> {
               }
               _pop();
             },
-            child: Stack(alignment: Alignment.center, children: [
+            child: Stack(fit: StackFit.expand, children: [
               Positioned.fill(child: widget.child),
-              if (show) IgnorePointer(child: _ind()),
+              if (show)
+                Positioned.fill(
+                    child: IgnorePointer(child: Center(child: _ind()))),
             ]),
           ),
         ),
@@ -1566,7 +1626,6 @@ Future<void> main() async {
   final sv = Store.p.getString('theme');
   curTh = themes.firstWhere((t) => t.id == sv, orElse: () => themes[0]);
   themeId.value = curTh.id;
-  perfN.value = Store.p.getString('perf') == 'ultra' ? 'ultra' : 'lite';
   runApp(const LesehanApp());
 }
 
@@ -1574,9 +1633,9 @@ class LesehanApp extends StatelessWidget {
   const LesehanApp({super.key});
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: Listenable.merge([themeId, perfN]),
+        listenable: themeId,
         builder: (_, __) => MaterialApp(
-          key: ValueKey('${themeId.value}-${perfN.value}'),
+          key: ValueKey(themeId.value),
           title: 'LesehanTV',
           debugShowCheckedModeBanner: false,
           theme: buildTheme(),
@@ -1701,7 +1760,7 @@ class _RootState extends State<Root> {
             if (!App.popDone && App.popup != null) {
               WidgetsBinding.instance.addPostFrameCallback((_) => _popup());
             }
-            body = IndexedStack(index: i, children: [
+            body = TabSwitch(index: i, children: [
               HomeTab(),
               PopularTab(),
               CatalogTab(),
@@ -1710,12 +1769,17 @@ class _RootState extends State<Root> {
             ]);
           }
           return Scaffold(
-            extendBody: ultra,
             body: Stack(children: [
               const Positioned.fill(child: GlowBg()),
-              SafeArea(bottom: !ultra, child: body),
+              SafeArea(bottom: false, child: body),
+              if (App.loaded)
+                Positioned(
+                  left: 20,
+                  right: 20,
+                  bottom: 14 + MediaQuery.of(context).padding.bottom,
+                  child: FloatNav(i, (v) => App.tab.value = v),
+                ),
             ]),
-            bottomNavigationBar: mainNav(i, (v) => App.tab.value = v),
           );
         },
       );
@@ -1841,7 +1905,7 @@ class _HomeTabState extends State<HomeTab> {
               controller: pc,
               onPageChanged: (v) => setState(() => heroI = v),
               children: hero
-                  .map((g) => GestureDetector(
+                  .map((g) => Tap(
                         onTap: () => openDetail(context, g),
                         child: Stack(fit: StackFit.expand, children: [
                           poster(g.thumb, radius: 20),
@@ -1942,7 +2006,7 @@ class ResumeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final g = App.gm[e.title];
     final pr = Store.progOf(e.key);
-    return GestureDetector(
+    return Tap(
       onTap: () => playEp(context, e),
       child: SizedBox(
         width: 190,
@@ -2215,140 +2279,208 @@ class LibraryTab extends StatelessWidget {
 class ProfileTab extends StatelessWidget {
   ProfileTab({super.key});
 
-  Widget _lv() {
-    final t = Store.watchSec;
-    final i = lvInfo(t.toDouble());
-    final R = rlm[i.r];
-    final stars = '★' * i.st + '☆' * (9 - i.st);
-    final nxt = i.max
-        ? 'Puncak Dou Di tercapai 🏯 Level maksimal, waktu nonton tetap dihitung'
-        : (i.st == 9 && !i.top
-            ? 'Menuju ranah ${rlm[i.r + 1].name}'
-            : 'Menuju bintang ${i.st + 1}');
-    final left = i.max ? '' : ' · sisa ${fmtDur(i.left)}';
+  static const _hr = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+
+  List<MapEntry<String, int>> _top(String bucket, [int n = 5]) {
+    final l = Store.wk(bucket).entries.where((e) => e.value > 0).toList();
+    l.sort((x, y) => y.value.compareTo(x.value));
+    return l.take(n).toList();
+  }
+
+  Widget _head(String t) => Padding(
+        padding: const EdgeInsets.only(top: 16, bottom: 8),
+        child: Text(t,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+      );
+
+  Widget _stat(String big, String small) => Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+              color: fg.withOpacity(.08),
+              borderRadius: BorderRadius.circular(14)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(big,
+                style: TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w800, color: accent)),
+            Text(small, style: TextStyle(color: mut, fontSize: 11)),
+          ]),
+        ),
+      );
+
+  Widget _recap() {
+    final total = Store.watchSec;
+    final days = Store.wk('d');
+    final titles = Store.wk('t');
+    final now = DateTime.now();
+
+    // streak: hari berturut-turut (hari ini yang masih kosong belum memutus)
+    var streak = 0;
+    var d = now;
+    if ((days[Store.dayKey(d)] ?? 0) == 0) d = d.subtract(const Duration(days: 1));
+    while ((days[Store.dayKey(d)] ?? 0) > 0) {
+      streak++;
+      d = d.subtract(const Duration(days: 1));
+    }
+
+    // 7 hari terakhir
+    final wk = <MapEntry<String, int>>[];
+    for (var i = 6; i >= 0; i--) {
+      final x = now.subtract(Duration(days: i));
+      wk.add(MapEntry(_hr[x.weekday - 1], days[Store.dayKey(x)] ?? 0));
+    }
+    final wMax = wk.fold<int>(1, (m, e) => max(m, e.value));
+    final wSum = wk.fold<int>(0, (m, e) => m + e.value);
+
+    final tt = _top('t');
+    final tg2 = _top('g');
+    final big = total >= 3600 ? '${total ~/ 3600}' : '${(total / 60).round()}';
+    final unit = total >= 3600
+        ? 'jam ${(total % 3600) ~/ 60} mnt'
+        : 'menit';
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(14),
-      decoration: cardBox(border: R.r >= 9 ? R.c : null),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+          gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [accent.withOpacity(.32), curTh.g2.withOpacity(.16)]),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: accent.withOpacity(.5))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('🔥 Level Kultivasi',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        Text('Waktu nonton jadi Dou Qi-mu. Dicatat otomatis di perangkat ini, tanpa akun.',
-            style: TextStyle(color: mut, fontSize: 12, height: 1.5)),
-        const SizedBox(height: 12),
-        Row(children: [
-          Container(
-            width: 54,
-            height: 54,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: R.c.withOpacity(.2),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: R.c)),
-            child: Text(R.emoji, style: const TextStyle(fontSize: 28)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(R.name,
-                  style: TextStyle(
-                      color: R.c, fontSize: 20, fontWeight: FontWeight.w800)),
-              Text(stars,
-                  style: TextStyle(color: R.c, fontSize: 15, letterSpacing: 1)),
-            ]),
+        const Text('🎧 Rekap Tontonanmu',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text('Dicatat otomatis di perangkat ini, tanpa akun.',
+            style: TextStyle(color: mut, fontSize: 12)),
+        const SizedBox(height: 14),
+        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(big,
+              style: TextStyle(
+                  fontSize: 52,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  color: accent)),
+          const SizedBox(width: 8),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text('$unit\nwaktu nonton',
+                style: TextStyle(color: mut, fontSize: 12, height: 1.3)),
           ),
         ]),
-        const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(
-              value: i.p,
-              minHeight: 9,
-              color: R.c,
-              backgroundColor: fg.withOpacity(.1)),
+        const SizedBox(height: 14),
+        Row(children: [
+          _stat('🔥 $streak', 'hari beruntun'),
+          const SizedBox(width: 10),
+          _stat('🎬 ${titles.length}', 'judul ditonton'),
+        ]),
+        if (total > 0 && titles.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Text(
+                'Daftar judul & genre teratas mulai terisi dari tontonan berikutnya.',
+                style: TextStyle(color: mut, fontSize: 12)),
+          ),
+        if (total == 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Text('Belum ada tontonan. Putar video dan rekapmu muncul di sini.',
+                style: TextStyle(color: mut, fontSize: 12)),
+          ),
+        _head('Minggu ini · ${fmtDur(wSum)}'),
+        SizedBox(
+          height: 92,
+          child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                for (final e in wk)
+                  Expanded(
+                    child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Container(
+                            width: 18,
+                            height: e.value == 0 ? 4 : 8 + 60 * e.value / wMax,
+                            decoration: BoxDecoration(
+                                color: e.value == 0
+                                    ? fg.withOpacity(.12)
+                                    : accent,
+                                borderRadius: BorderRadius.circular(6)),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(e.key,
+                              style: TextStyle(color: mut, fontSize: 10)),
+                        ]),
+                  ),
+              ]),
         ),
-        const SizedBox(height: 6),
-        Text('$nxt$left', style: TextStyle(color: mut, fontSize: 12)),
-        Text('Total nonton ${fmtDur(t)}',
-            style: TextStyle(color: mut, fontSize: 12)),
-        const SizedBox(height: 12),
-        GridView.count(
-          crossAxisCount: 5,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 6,
-          crossAxisSpacing: 6,
-          childAspectRatio: .78,
-          children: [
-            for (var k = 0; k < rlb.length; k++)
-              Opacity(
-                opacity: k < R.r ? .85 : (k == R.r ? 1 : .45),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  decoration: BoxDecoration(
-                      color: k == R.r
-                          ? rlb[k].c.withOpacity(.18)
-                          : fg.withOpacity(.05),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: k == R.r ? rlb[k].c : lineC)),
+        if (tt.isNotEmpty) ...[
+          _head('Judul teratas'),
+          for (var i = 0; i < tt.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                SizedBox(
+                    width: 22,
+                    child: Text('${i + 1}',
+                        style: TextStyle(
+                            fontSize: i == 0 ? 20 : 15,
+                            fontWeight: FontWeight.w800,
+                            color: i == 0 ? accent : mut))),
+                SizedBox(
+                    width: 46,
+                    height: 46,
+                    child: poster(App.gm[tt[i].key]?.thumb ?? '', radius: 10)),
+                const SizedBox(width: 10),
+                Expanded(
                   child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(rlb[k].emoji, style: const TextStyle(fontSize: 18)),
-                        Text(rlb[k].name,
-                            textAlign: TextAlign.center,
+                        Text(tt[i].key,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 9, height: 1.2)),
-                        Text('${rlm.firstWhere((e) => e.r == k).h} jam',
-                            style: TextStyle(fontSize: 8, color: mut)),
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                              value: tt[i].value / tt[0].value,
+                              minHeight: 5,
+                              color: accent,
+                              backgroundColor: fg.withOpacity(.1)),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(fmtDur(tt[i].value),
+                            style: TextStyle(color: mut, fontSize: 11)),
                       ]),
                 ),
+              ]),
+            ),
+        ],
+        if (tg2.isNotEmpty) ...[
+          _head('Genre teratas'),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (var i = 0; i < tg2.length; i++)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                    color: accent.withOpacity(i == 0 ? .3 : .12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: accent.withOpacity(.6))),
+                child: Text('${tg2[i].key} · ${fmtDur(tg2[i].value)}',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: i == 0 ? FontWeight.w700 : FontWeight.w500)),
               ),
-          ],
-        ),
+          ]),
+        ],
       ]),
     );
   }
-
-  Widget _pm(String id, String label) {
-    final on = perfN.value == id;
-    return GestureDetector(
-      onTap: () => setPerf(id),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-            color: on ? accent.withOpacity(.2) : fg.withOpacity(.05),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: on ? accent : lineC, width: on ? 1.5 : 1)),
-        child: Text(label,
-            style: TextStyle(
-                fontWeight: FontWeight.w600, color: on ? accent : fg)),
-      ),
-    );
-  }
-
-  Widget _perf() => Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
-        padding: const EdgeInsets.all(14),
-        decoration: cardBox(),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Mode Tampilan',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4),
-          Text('Lite: ringan & hemat baterai. Ultra: animasi penuh dengan efek kaca.',
-              style: TextStyle(color: mut, fontSize: 12, height: 1.5)),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(child: _pm('lite', '⚡ Lite')),
-            const SizedBox(width: 10),
-            Expanded(child: _pm('ultra', '✨ Ultra')),
-          ]),
-        ]),
-      );
 
   Widget _theme() => Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
@@ -2361,18 +2493,15 @@ class ProfileTab extends StatelessWidget {
           Text('Pilih warna yang paling nyaman di matamu.',
               style: TextStyle(color: mut, fontSize: 12)),
           const SizedBox(height: 12),
-          GridView.count(
-            crossAxisCount: 3,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 2.4,
-            children: [
+          LayoutBuilder(builder: (_, bc) {
+            final w = (bc.maxWidth - 16) / 3;
+            return Wrap(spacing: 8, runSpacing: 8, children: [
               for (final t in themes)
-                GestureDetector(
+                Tap(
                   onTap: () => setTheme(t.id),
                   child: Container(
+                    width: w,
+                    height: w / 2.4,
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     decoration: BoxDecoration(
                         color: fg.withOpacity(.05),
@@ -2402,8 +2531,8 @@ class ProfileTab extends StatelessWidget {
                     ]),
                   ),
                 ),
-            ],
-          ),
+            ]);
+          }),
         ]),
       );
 
@@ -2436,7 +2565,7 @@ class ProfileTab extends StatelessWidget {
               child: Text('Streaming santai di mana saja',
                   style: TextStyle(color: mut, fontSize: 13))),
           const SizedBox(height: 18),
-          GestureDetector(
+          Tap(
             onTap: () => openUrl('https://saweria.co/AKUINGINTERKENAL'),
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -2453,11 +2582,10 @@ class ProfileTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          _lv(),
-          _perf(),
+          _recap(),
           _theme(),
           const SizedBox(height: 8),
-          GestureDetector(
+          Tap(
             onTap: () => openUrl('https://t.me/+U0ocipINk6MzYmE1'),
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -2606,7 +2734,7 @@ class _DetailPageState extends State<DetailPage> {
                     overflow: more ? null : TextOverflow.ellipsis,
                     style: TextStyle(color: mut, height: 1.6, fontSize: 14)),
                 if (syn.length > 220)
-                  GestureDetector(
+                  Tap(
                     onTap: () => setState(() => more = !more),
                     child: Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -2695,7 +2823,7 @@ class _DetailPageState extends State<DetailPage> {
                 final pr = Store.progOf(e.key);
                 final isLast = last != null && last.key == e.key;
                 final isNew = e.id >= App.eps.length - 10;
-                return GestureDetector(
+                return Tap(
                   onTap: () => playEp(context, e),
                   child: Container(
                     margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -2806,25 +2934,61 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   ChewieController? cc;
   WebViewController? wc;
   Timer? _wt;
+  bool _fs = false, _wasPlaying = false, _webHeld = false;
+  int _holds = 0;
+  final _wvKey = GlobalKey(), _chKey = GlobalKey();
+  static final List<_PlayerPageState> stack = [];
+  static _PlayerPageState? get top => stack.isEmpty ? null : stack.last;
+
+  static const _fsJs = r'''(function(){if(window.__lfs)return;window.__lfs=1;function f(){var e=document.fullscreenElement||document.webkitFullscreenElement;LesehanFS.postMessage(e?'1':'0');}document.addEventListener('fullscreenchange',f);document.addEventListener('webkitfullscreenchange',f);})();''';
+
+  /// jeda video saat halaman lain (Detail/pemutar lain) menutupi pemutar ini
+  void hold() {
+    if (_holds++ > 0) return;
+    _wasPlaying = vc?.value.isPlaying ?? false;
+    vc?.pause();
+    if (wc != null) {
+      _webHeld = true;
+      wc!.loadHtmlString('<html><body style="background:#000"></body></html>');
+    }
+  }
+
+  void release() {
+    if (_holds == 0) return;
+    if (--_holds > 0 || !mounted) return;
+    if (_wasPlaying) vc?.play();
+    if (_webHeld) {
+      _webHeld = false;
+      start();
+    }
+  }
+
+  void _enterFs() {
+    if (_fs || !mounted) return;
+    setState(() => _fs = true);
+    SystemChrome.setPreferredOrientations(
+        [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  void _exitFs() {
+    if (!_fs) return;
+    if (mounted) setState(() => _fs = false);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+  }
 
   @override
   void initState() {
     super.initState();
     ep = widget.ep;
+    stack.add(this);
     WidgetsBinding.instance.addObserver(this);
     _wt = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!mounted || !_resumed || loading || err != null) return;
+      if (!mounted || !_resumed || _holds > 0 || loading || err != null) return;
       final playing = vc != null ? vc!.value.isPlaying : wc != null;
       if (!playing) return;
-      final up = Store.addWatch(5);
-      if (up != null) {
-        final R = rlm[up.r];
-        toast(
-            context,
-            up.st == 1
-                ? '🎉 Naik ranah! ${R.emoji} ${R.name} ★1'
-                : '✨ ${R.name} naik ke bintang ${up.st}');
-      }
+      Store.addWatch(ep, 5);
     });
     start();
   }
@@ -2906,7 +3070,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         wc = WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
           ..setBackgroundColor(Colors.black)
-          ..setNavigationDelegate(NavigationDelegate(onNavigationRequest: (r) {
+          ..addJavaScriptChannel('LesehanFS', onMessageReceived: (m) {
+            if (!mounted) return;
+            if (m.message == '1') {
+              _enterFs();
+            } else {
+              _exitFs();
+            }
+          })
+          ..setNavigationDelegate(NavigationDelegate(
+              onPageFinished: (_) {
+                wc?.runJavaScript(_fsJs).catchError((_) {});
+              },
+              onNavigationRequest: (r) {
             // blokir popup/pengalihan iklan: hanya halaman utama server yang boleh
             if (!r.isMainFrame) return NavigationDecision.navigate;
             final h = Uri.tryParse(r.url)?.host ?? '';
@@ -2921,7 +3097,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } catch (_) {
       if (tk == _tok) err = 'Video gagal diputar';
     }
-    if (tk == _tok && mounted) setState(() => loading = false);
+    if (tk == _tok && mounted) {
+      setState(() => loading = false);
+      if (_holds > 0) vc?.pause();
+    }
   }
 
   void _onTick() {
@@ -2958,9 +3137,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _wt?.cancel();
+    stack.remove(this);
     WidgetsBinding.instance.removeObserver(this);
     _tok++;
     _release();
+    if (_fs) SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     Gest.resetBri();
     super.dispose();
@@ -3048,38 +3229,33 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ]),
       );
     }
-    if (cc != null) return GestLayer(child: Chewie(controller: cc!));
-    if (wc != null) return WebViewWidget(controller: wc!);
+    if (cc != null) {
+      return GestLayer(child: Chewie(key: _chKey, controller: cc!));
+    }
+    if (wc != null) return _web();
     return const SizedBox.shrink();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final g = App.gm[ep.title];
-    final all = g?.eps ?? [ep];
-    final names = [
-      ep.svn.isEmpty ? 'Server 1' : ep.svn,
-      ...ep.extra.map((x) => x.name)
-    ];
-    return Scaffold(
-      body: SafeArea(
-        child: Column(children: [
-          Row(children: [
-            IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.pop(context)),
-            Expanded(
-                child: Text(
-                    '${ep.title}${ep.eps.isEmpty ? '' : ' - ${ep.eps}'}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13))),
-          ]),
-          AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Container(color: Colors.black, child: _video())),
-          Expanded(
-            child: ListView(padding: const EdgeInsets.all(14), children: [
+  Widget _web() => Stack(fit: StackFit.expand, children: [
+        WebViewWidget(key: _wvKey, controller: wc!),
+        Positioned(
+          top: 6,
+          right: 6,
+          child: Tap(
+            onTap: _fs ? _exitFs : _enterFs,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                  color: Colors.black54, borderRadius: BorderRadius.circular(10)),
+              child: Icon(_fs ? Icons.fullscreen_exit : Icons.fullscreen,
+                  color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+      ]);
+
+  Widget _infoList(Group? g, List<Ep> all, List<String> names) =>
+      ListView(padding: const EdgeInsets.all(14), children: [
               Row(children: [
                 Container(
                   width: 54,
@@ -3106,7 +3282,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               const SizedBox(height: 14),
               Wrap(spacing: 8, runSpacing: 8, children: [
                 VoteRow(ep.title),
-                GestureDetector(
+                Tap(
                   onTap: _report,
                   child: Container(
                     padding:
@@ -3161,10 +3337,68 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 ),
               ],
               if (g != null) recSection(g),
-            ]),
-          ),
+      ]);
+
+  @override
+  Widget build(BuildContext context) {
+    if (_fs && wc != null) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _exitFs();
+        },
+        child: Scaffold(backgroundColor: Colors.black, body: _web()),
+      );
+    }
+    final g = App.gm[ep.title];
+    final all = g?.eps ?? [ep];
+    final names = [
+      ep.svn.isEmpty ? 'Server 1' : ep.svn,
+      ...ep.extra.map((x) => x.name)
+    ];
+    final land = MediaQuery.of(context).orientation == Orientation.landscape;
+    final head = Row(children: [
+      IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context)),
+      Expanded(
+          child: Text('${ep.title}${ep.eps.isEmpty ? '' : ' - ${ep.eps}'}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13))),
+    ]);
+    final info = _infoList(g, all, names);
+    if (land) {
+      // lanskap: kiri khusus pemutar, kanan info/server/episode/rekomendasi
+      return Scaffold(
+        body: SafeArea(
+          child: Row(children: [
+            Expanded(
+              flex: 5,
+              child: Container(
+                  color: Colors.black,
+                  alignment: Alignment.center,
+                  child: AspectRatio(aspectRatio: 16 / 9, child: _video())),
+            ),
+            Expanded(
+              flex: 3,
+              child: Column(children: [head, Expanded(child: info)]),
+            ),
+          ]),
+        ),
+      );
+    }
+    return Scaffold(
+      body: SafeArea(
+        child: Column(children: [
+          head,
+          AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Container(color: Colors.black, child: _video())),
+          Expanded(child: info),
         ]),
       ),
     );
   }
 }
+
