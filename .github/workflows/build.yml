@@ -88,6 +88,34 @@ jobs:
           }
           KOT
 
+      # latar peluncuran hitam (sebelum splash.mp4 tampil)
+      - name: Latar peluncuran hitam
+        run: |
+          R=android/app/src/main/res
+          for d in drawable drawable-v21; do
+            mkdir -p $R/$d
+            cat > $R/$d/launch_background.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+            <item>
+              <shape android:shape="rectangle">
+                <solid android:color="#FF000000"/>
+              </shape>
+            </item>
+          </layer-list>
+          XML
+          done
+          mkdir -p $R/values-v31
+          cat > $R/values-v31/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+            <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+              <item name="android:windowBackground">@drawable/launch_background</item>
+              <item name="android:windowSplashScreenBackground">#000000</item>
+            </style>
+          </resources>
+          XML
+
       # daftarkan folder assets/ di pubspec (jika belum)
       - name: Daftarkan assets
         run: |
