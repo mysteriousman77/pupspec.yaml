@@ -1063,12 +1063,7 @@ Widget section(String title, List<Widget> kids,
         ),
         SizedBox(
           height: h,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: kids.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
-            itemBuilder: (_, i) => kids[i],
-          ),
+          child: AutoRow(count: kids.length, item: (_, i) => kids[i]),
         ),
       ],
     );
@@ -1540,7 +1535,8 @@ class Gest {
 /// geser vertikal: kiri = kecerahan, kanan = volume
 class GestLayer extends StatefulWidget {
   final Widget child;
-  const GestLayer({required this.child, super.key});
+  final bool fitBtn;
+  const GestLayer({required this.child, this.fitBtn = false, super.key});
   @override
   State<GestLayer> createState() => _GestS();
 }
@@ -1622,11 +1618,330 @@ class _GestS extends State<GestLayer> {
               if (show)
                 Positioned.fill(
                     child: IgnorePointer(child: Center(child: _ind()))),
+              if (widget.fitBtn)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: SafeArea(
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: fitN,
+                      builder: (_, st, __) => Tap(
+                        onTap: () => setFit(!st),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 7),
+                          decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(.4),
+                              borderRadius: BorderRadius.circular(20)),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.aspect_ratio,
+                                size: 16, color: st ? accent : Colors.white70),
+                            const SizedBox(width: 5),
+                            Text(st ? 'Regang' : 'Asli',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: st ? accent : Colors.white70)),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ]),
           ),
         ),
       );
 }
+
+/* ===================== SLIDER OTOMATIS ===================== */
+/// baris geser horizontal yang bergerak sendiri (tiap baris punya irama sendiri),
+/// tetap bisa digeser tangan; berhenti sebentar saat disentuh
+class AutoRow extends StatefulWidget {
+  final int count;
+  final double gap;
+  final IndexedWidgetBuilder item;
+  const AutoRow({required this.count, required this.item, this.gap = 10, super.key});
+  @override
+  State<AutoRow> createState() => _AutoRowS();
+}
+
+class _AutoRowS extends State<AutoRow> {
+  static int _n = 0;
+  final sc = ScrollController();
+  Timer? _t;
+  late final int period, delay;
+  bool touch = false, back = false;
+  int resumeAt = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final k = _n++;
+    period = 3600 + (k * 730) % 2900; // 3,6 - 6,5 detik, beda tiap baris
+    delay = 600 + (k * 1170) % 3200; // mulai bergantian
+    _t = Timer(Duration(milliseconds: delay), () {
+      _step();
+      _t = Timer.periodic(Duration(milliseconds: period), (_) => _step());
+    });
+  }
+
+  void _step() {
+    if (!mounted || !sc.hasClients || touch) return;
+    if (DateTime.now().millisecondsSinceEpoch < resumeAt) return;
+    final ps = sc.position;
+    final mx = ps.maxScrollExtent;
+    if (mx <= 8) return;
+    if (ps.pixels >= mx - 6) back = true;
+    if (ps.pixels <= 6) back = false;
+    if (back) {
+      sc.animateTo(0,
+          duration: const Duration(milliseconds: 1700),
+          curve: Curves.easeInOutCubic);
+    } else {
+      final to = min(mx, ps.pixels + ps.viewportDimension * .55);
+      sc.animateTo(to,
+          duration: const Duration(milliseconds: 1000),
+          curve: Curves.easeInOutCubic);
+    }
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    sc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+        onPointerDown: (_) => touch = true,
+        onPointerUp: (_) {
+          touch = false;
+          resumeAt = DateTime.now().millisecondsSinceEpoch + 5000;
+        },
+        onPointerCancel: (_) {
+          touch = false;
+          resumeAt = DateTime.now().millisecondsSinceEpoch + 5000;
+        },
+        child: ListView.separated(
+          controller: sc,
+          scrollDirection: Axis.horizontal,
+          itemCount: widget.count,
+          separatorBuilder: (_, __) => SizedBox(width: widget.gap),
+          itemBuilder: widget.item,
+        ),
+      );
+}
+
+/* ===================== SATURASI VIDEO ===================== */
+/// 100 = normal, 200 = warna dua kali lebih pekat
+final satN = ValueNotifier<double>(100);
+
+void setSat(double v) {
+  satN.value = v;
+  Store.p.setDouble('sat', v);
+}
+
+ColorFilter satFilter(double pct) {
+  final s = pct / 100;
+  const r = .2126, g = .7152, b = .0722;
+  return ColorFilter.matrix([
+    r * (1 - s) + s, g * (1 - s), b * (1 - s), 0, 0, //
+    r * (1 - s), g * (1 - s) + s, b * (1 - s), 0, 0, //
+    r * (1 - s), g * (1 - s), b * (1 - s) + s, 0, 0, //
+    0, 0, 0, 1, 0,
+  ]);
+}
+
+Widget satWrap(Widget c) => ValueListenableBuilder<double>(
+      valueListenable: satN,
+      child: c,
+      builder: (_, v, ch) =>
+          v <= 100 ? ch! : ColorFiltered(colorFilter: satFilter(v), child: ch),
+    );
+
+/* ===================== UKURAN VIDEO ===================== */
+/// false = asli (proporsi video dijaga), true = regang memenuhi layar tanpa terpotong
+final fitN = ValueNotifier<bool>(false);
+
+void setFit(bool v) {
+  fitN.value = v;
+  Store.p.setBool('fit', v);
+}
+
+Widget fitWrap(Widget child, double va) => ValueListenableBuilder<bool>(
+      valueListenable: fitN,
+      child: child,
+      builder: (_, st, ch) {
+        if (!st || va <= 0) return ch!;
+        return LayoutBuilder(builder: (_, bc) {
+          final cw = bc.maxWidth, chh = bc.maxHeight;
+          if (!cw.isFinite || !chh.isFinite) return ch!;
+          double w, h;
+          if (va > cw / chh) {
+            w = cw;
+            h = cw / va;
+          } else {
+            h = chh;
+            w = chh * va;
+          }
+          return Center(
+            child: Transform.scale(
+              scaleX: cw / w,
+              scaleY: chh / h,
+              child: SizedBox(width: w, height: h, child: ch),
+            ),
+          );
+        });
+      },
+    );
+
+/* ===================== CADANGAN DATA ===================== */
+Future<bool> saveBackup(String name, String text) async {
+  try {
+    return (await _nat.invokeMethod('saveFile', {'name': name, 'text': text})) ==
+        true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<String?> pickBackup() async {
+  try {
+    return await _nat.invokeMethod<String>('pickFile');
+  } catch (_) {
+    return null;
+  }
+}
+
+Map<String, dynamic> backupData() => {
+      'app': 'LesehanTV',
+      'jenis': 'cadangan',
+      'v': 1,
+      'pesan': 'Cadangan data LesehanTV. Jangan diubah manual.',
+      'dibuat': DateTime.now().toIso8601String(),
+      'bookmark': Store.bms,
+      'riwayat': Store.hist,
+      'posisi': Store.jm('pos'),
+      'ditonton': Store.jm('seen'),
+      'rekap': {'detik': Store.watchSec, 'detail': Store.jm('wk')},
+    };
+
+Future<void> exportBackup(BuildContext c) async {
+  final d = DateTime.now();
+  String two(int n) => n.toString().padLeft(2, '0');
+  final name = 'LesehanTV-Cadangan-${d.year}${two(d.month)}${two(d.day)}.json';
+  final ok = await saveBackup(name, jsonEncode(backupData()));
+  if (c.mounted && ok) toast(c, '✅ Cadangan tersimpan: $name');
+}
+
+Future<void> importBackup(BuildContext c) async {
+  final txt = await pickBackup();
+  if (txt == null || !c.mounted) return;
+  Map<String, dynamic> d;
+  try {
+    d = Map<String, dynamic>.from(jsonDecode(txt));
+    if (d['app'] != 'LesehanTV' || d['jenis'] != 'cadangan') throw 'x';
+  } catch (_) {
+    toast(c, 'Bukan file cadangan LesehanTV');
+    return;
+  }
+  final mode = await showDialog<String>(
+    context: c,
+    builder: (x) => AlertDialog(
+      backgroundColor: isLight ? Colors.white : const Color(0xFF15151C),
+      title: const Text('Pulihkan cadangan'),
+      content: const Text(
+          'Gabungkan dengan data di perangkat ini, atau ganti semuanya dengan isi cadangan?'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(x), child: const Text('Batal')),
+        OutlinedButton(
+            onPressed: () => Navigator.pop(x, 'ganti'),
+            child: const Text('Ganti')),
+        FilledButton(
+            onPressed: () => Navigator.pop(x, 'gabung'),
+            child: const Text('Gabung')),
+      ],
+    ),
+  );
+  if (mode == null) return;
+  final merge = mode == 'gabung';
+  Map<String, dynamic> mp(dynamic v) =>
+      v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{};
+  int ni(dynamic v) => v is num ? v.toInt() : 0;
+
+  final bm = <String>[
+    if (merge) ...Store.bms,
+    ...((d['bookmark'] as List?) ?? []).map((e) => e.toString()),
+  ].toSet().toList();
+  Store.p.setStringList('bms', bm);
+  final inH = ((d['riwayat'] as List?) ?? [])
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e))
+      .toList();
+  final hs = <Map<String, dynamic>>[];
+  for (final h in [if (merge) ...Store.hist, ...inH]) {
+    if (!hs.any((x) => x['title'] == h['title'])) hs.add(h);
+  }
+  Store.sj('hist', hs.take(20).toList());
+  final pos = merge ? Store.jm('pos') : <String, dynamic>{};
+  mp(d['posisi']).forEach((k, v) {
+    final cur = pos[k];
+    final nt = v is Map ? ((v['t'] as num?) ?? 0) : 0;
+    final ct = cur is Map ? ((cur['t'] as num?) ?? 0) : -1;
+    if (nt > ct) pos[k] = v;
+  });
+  Store.sj('pos', pos);
+  final seen = merge ? Store.jm('seen') : <String, dynamic>{};
+  seen.addAll(mp(d['ditonton']));
+  Store.sj('seen', seen);
+  final rk = mp(d['rekap']);
+  Store.p.setInt('lvsec',
+      merge ? max(Store.watchSec, ni(rk['detik'])) : ni(rk['detik']));
+  final wk = merge ? Store.jm('wk') : <String, dynamic>{};
+  mp(rk['detail']).forEach((b, v) {
+    final cur = mp(wk[b]);
+    mp(v).forEach((k, s2) {
+      cur[k] = max(ni(cur[k]), ni(s2));
+    });
+    wk[b] = cur;
+  });
+  Store.sj('wk', wk);
+  App.refresh.value++;
+  if (c.mounted) {
+    toast(c, '✅ Dipulihkan: ${bm.length} bookmark, ${hs.length} riwayat');
+  }
+}
+
+Widget backupCard(BuildContext c) => Container(
+      margin: const EdgeInsets.only(top: 22),
+      padding: const EdgeInsets.all(14),
+      decoration: cardBox(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('💾 Cadangan LesehanTV',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Text('Simpan bookmark, riwayat, dan rekap tontonan ke file, lalu pulihkan kapan saja (misal di HP baru).',
+            style: TextStyle(color: mut, fontSize: 12, height: 1.5)),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: FilledButton.icon(
+                onPressed: () => exportBackup(c),
+                icon: const Icon(Icons.upload_rounded),
+                label: const Text('Ekspor')),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: OutlinedButton.icon(
+                onPressed: () => importBackup(c),
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('Impor')),
+          ),
+        ]),
+      ]),
+    );
 
 /* ===================== SKELETON & PEMILIH TONTONAN ===================== */
 class Skel extends StatefulWidget {
@@ -2125,6 +2440,8 @@ Future<void> main() async {
   final sv = Store.p.getString('theme');
   curTh = themes.firstWhere((t) => t.id == sv, orElse: () => themes[0]);
   themeId.value = curTh.id;
+  satN.value = (Store.p.getDouble('sat') ?? 100).clamp(100.0, 200.0);
+  fitN.value = Store.p.getBool('fit') ?? false;
   runApp(const LesehanApp());
 }
 
@@ -2356,11 +2673,10 @@ class _HomeTabState extends State<HomeTab> {
       ),
       SizedBox(
         height: 200,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: top.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (_, i) => t10Item(context, i, top[i].key, top[i].value),
+        child: AutoRow(
+          count: top.length,
+          gap: 8,
+          item: (_, i) => t10Item(context, i, top[i].key, top[i].value),
         ),
       ),
     ]);
@@ -2808,6 +3124,7 @@ class LibraryTab extends StatelessWidget {
               itemBuilder: (_, i) => ResumeCard(hs[i]),
             ),
           ),
+        backupCard(context),
       ],
     );
   }
@@ -3499,6 +3816,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  /// terapkan saturasi & ukuran ke halaman embed (CSS disuntikkan)
+  void _applyWeb() {
+    final w = wc;
+    if (w == null) return;
+    final sx = satN.value / 100;
+    final css = '${fitN.value ? 'video{object-fit:fill!important}' : ''}'
+        '${sx > 1 ? 'video,iframe{filter:saturate($sx)!important}' : ''}';
+    w
+        .runJavaScript(
+            "(function(){var s=document.getElementById('lsty');if(!s){s=document.createElement('style');s.id='lsty';(document.head||document.documentElement).appendChild(s);}s.textContent='$css';})();")
+        .catchError((_) {});
+  }
+
   void _enterFs() {
     if (_fs || !mounted) return;
     setState(() => _fs = true);
@@ -3519,6 +3849,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     super.initState();
     ep = widget.ep;
     stack.add(this);
+    satN.addListener(_applyWeb);
+    fitN.addListener(_applyWeb);
     WidgetsBinding.instance.addObserver(this);
     _wt = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted || !_resumed || _holds > 0 || loading || err != null) return;
@@ -3584,12 +3916,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           autoPlay: true,
           aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
           allowedScreenSleep: false,
-          routePageBuilder: (c, a, sa, prov) => AnimatedBuilder(
+          routePageBuilder: (ctx, a, sa, prov) => AnimatedBuilder(
               animation: a,
               builder: (_, __) => Scaffold(
                   resizeToAvoidBottomInset: false,
                   backgroundColor: Colors.black,
-                  body: GestLayer(child: prov))),
+                  body: GestLayer(
+                      fitBtn: true,
+                      child: satWrap(fitWrap(
+                          prov,
+                          c.value.aspectRatio == 0
+                              ? 16 / 9
+                              : c.value.aspectRatio))))),
           deviceOrientationsOnEnterFullScreen: [
             DeviceOrientation.landscapeLeft,
             DeviceOrientation.landscapeRight
@@ -3617,6 +3955,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           ..setNavigationDelegate(NavigationDelegate(
               onPageFinished: (_) {
                 wc?.runJavaScript(_fsJs).catchError((_) {});
+                _applyWeb();
               },
               onNavigationRequest: (r) {
             // blokir popup/pengalihan iklan: hanya halaman utama server yang boleh
@@ -3674,6 +4013,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void dispose() {
     _wt?.cancel();
     stack.remove(this);
+    satN.removeListener(_applyWeb);
+    fitN.removeListener(_applyWeb);
     WidgetsBinding.instance.removeObserver(this);
     _tok++;
     _release();
@@ -3764,7 +4105,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       );
     }
     if (cc != null) {
-      return GestLayer(child: Chewie(key: _chKey, controller: cc!));
+      final va = vc?.value.aspectRatio ?? 0;
+      return GestLayer(
+          child: satWrap(fitWrap(
+              Chewie(key: _chKey, controller: cc!), va == 0 ? 16 / 9 : va)));
     }
     if (wc != null) return _web();
     return const SizedBox.shrink();
@@ -3892,16 +4236,65 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ...ep.extra.map((x) => x.name)
     ];
     final land = MediaQuery.of(context).orientation == Orientation.landscape;
-    final head = Row(children: [
-      IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context)),
-      Expanded(
-          child: Text('${ep.title}${ep.eps.isEmpty ? '' : ' - ${ep.eps}'}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13))),
-    ]);
+    // tombol kembali melayang di atas pemutar (judul dihapus agar pemutar naik)
+    final back = Positioned(
+      top: 6,
+      left: 6,
+      child: Tap(
+        onTap: () => Navigator.pop(context),
+        child: Container(
+          width: 38,
+          height: 38,
+          decoration: const BoxDecoration(
+              shape: BoxShape.circle, color: Colors.black45),
+          child: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+        ),
+      ),
+    );
+    final sat = Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 8, 0),
+      child: Column(children: [
+        ValueListenableBuilder<bool>(
+          valueListenable: fitN,
+          builder: (_, st, __) => Row(children: [
+            Icon(Icons.aspect_ratio, size: 18, color: accent),
+            const SizedBox(width: 8),
+            Text('Ukuran', style: TextStyle(color: mut, fontSize: 12)),
+            const SizedBox(width: 12),
+            chipB('Asli', !st, () => setFit(false)),
+            const SizedBox(width: 8),
+            chipB('Regang', st, () => setFit(true)),
+          ]),
+        ),
+        ValueListenableBuilder<double>(
+          valueListenable: satN,
+          builder: (_, v, __) => Row(children: [
+            Icon(Icons.palette_outlined, size: 18, color: accent),
+            const SizedBox(width: 8),
+            Text('Saturasi', style: TextStyle(color: mut, fontSize: 12)),
+            Expanded(
+              child: Slider(
+                min: 100,
+                max: 200,
+                divisions: 20,
+                value: v.clamp(100.0, 200.0),
+                onChanged: setSat,
+              ),
+            ),
+            SizedBox(
+                width: 40,
+                child: Text('${v.round()}%',
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(fontSize: 12))),
+            IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Normal',
+                icon: const Icon(Icons.restart_alt, size: 20),
+                onPressed: () => setSat(100)),
+          ]),
+        ),
+      ]),
+    );
     final info = _infoList(g, all, names);
     if (land) {
       // lanskap: kiri khusus pemutar, kanan info/server/episode/rekomendasi
@@ -3913,11 +4306,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               child: Container(
                   color: Colors.black,
                   alignment: Alignment.center,
-                  child: AspectRatio(aspectRatio: 16 / 9, child: _video())),
+                  child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: Stack(fit: StackFit.expand, children: [_video(), back]))),
             ),
             Expanded(
               flex: 3,
-              child: Column(children: [head, Expanded(child: info)]),
+              child: Column(children: [sat, Expanded(child: info)]),
             ),
           ]),
         ),
@@ -3926,10 +4321,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
-          head,
           AspectRatio(
               aspectRatio: 16 / 9,
-              child: Container(color: Colors.black, child: _video())),
+              child: Container(
+                  color: Colors.black,
+                  child: Stack(fit: StackFit.expand, children: [_video(), back]))),
+          sat,
           Expanded(child: info),
         ]),
       ),
