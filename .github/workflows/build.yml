@@ -220,9 +220,12 @@ jobs:
             echo '<resources><color name="ic_launcher_background">#0B2038</color></resources>' > $R/values/ic_launcher_background.xml
           fi
 
+      # paket crypto untuk tanda tangan token API
+      - run: flutter pub add crypto
+
       - run: flutter pub get
 
-      - run: flutter build apk --release --build-number=${{ github.run_number }}
+      - run: flutter build apk --release --obfuscate --split-debug-info=build/symbols --build-number=${{ github.run_number }}
 
       # tanda tangan dengan kunci tetap (secret KEYSTORE_B64) supaya APK baru bisa
       # menimpa/update APK lama tanpa uninstall
