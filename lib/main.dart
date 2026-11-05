@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:crypto/crypto.dart' show Hmac, sha256;
 import 'dart:io' show gzip;
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
@@ -18,6 +19,22 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 const api =
     'https://script.google.com/macros/s/AKfycbycxushyypYFF1FptMeQYXRcldkioUTsHXg6-l69LamTBvK_BPjP5w5NHa8XK3_Cuc/exec';
 const tmdbKey = '9f660b069ce86b86c8b671b14338d3b2';
+
+/* ===================== TOKEN API (anti scraping) ===================== */
+// kunci disamarkan (XOR) agar tidak terbaca langsung dari string di APK
+const _akb = [57, 98, 62, 59, 60, 109, 63, 108, 62, 107, 62, 63, 108, 59, 107, 99, 62, 109, 60, 63, 60, 105, 109, 63, 57, 106, 106, 63, 60, 98, 98, 60, 62, 105, 106, 60, 57, 63, 98, 57, 59, 110, 109, 106, 57, 106, 104, 108];
+final List<int> _ak = [for (final c in _akb) c ^ 0x5A];
+
+/// bangun URL API bertanda waktu + tanda tangan HMAC; server menolak permintaan tanpa token valid
+String apiQ(String q) {
+  final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  final act = q.isEmpty ? 'list' : q.split('=').first.split('&').first;
+  final sig = Hmac(sha256, _ak)
+      .convert(utf8.encode('$ts|$act'))
+      .toString()
+      .substring(0, 20);
+  return '$api${q.isEmpty ? '?' : '?$q&'}k=$ts.$sig';
+}
 
 /* ===================== TEMA ===================== */
 class Th {
@@ -438,7 +455,7 @@ class App {
     }
     try {
       final r =
-          await http.get(Uri.parse(api)).timeout(const Duration(seconds: 20));
+          await http.get(Uri.parse(apiQ(''))).timeout(const Duration(seconds: 20));
       if (r.statusCode != 200) throw 'x';
       final body = utf8.decode(r.bodyBytes);
       final d = jsonDecode(body);
@@ -483,7 +500,7 @@ class App {
     for (var a = 0; a < 3; a++) {
       try {
         final r = await http
-            .get(Uri.parse('$api?stats=1&_=$now'))
+            .get(Uri.parse(apiQ('stats=1&_=$now')))
             .timeout(const Duration(seconds: 15));
         final body = utf8.decode(r.bodyBytes);
         final d = jsonDecode(body);
@@ -513,7 +530,7 @@ class App {
   static Future<void> loadInfo() async {
     try {
       final r = await http
-          .get(Uri.parse('$api?info=1'))
+          .get(Uri.parse(apiQ('info=1')))
           .timeout(const Duration(seconds: 15));
       final body = utf8.decode(r.bodyBytes);
       final d = jsonDecode(body);
@@ -539,7 +556,7 @@ class App {
     if (sv > 0) return e.extra[sv - 1].url;
     if (e.direct != null) return e.direct!;
     final r = await http
-        .get(Uri.parse('$api?id=${Uri.encodeComponent(e.rid!)}'))
+        .get(Uri.parse(apiQ('id=${Uri.encodeComponent(e.rid!)}')))
         .timeout(const Duration(seconds: 15));
     final d = jsonDecode(utf8.decode(r.bodyBytes));
     final u = s(d is Map ? d['src'] : '');
@@ -554,7 +571,7 @@ class App {
     if (now - last < 1800000) return;
     Store.p.setInt('vw_$k', now);
     unawaited(http
-        .get(Uri.parse('$api?view=${Uri.encodeComponent(k)}'))
+        .get(Uri.parse(apiQ('view=${Uri.encodeComponent(k)}')))
         .then((_) {}, onError: (_) {}));
   }
 
@@ -581,7 +598,7 @@ class App {
     refresh.value++;
     try {
       final r = await http
-          .get(Uri.parse('$api?vote=${Uri.encodeComponent(k)}&v=$nv&prev=$prev'))
+          .get(Uri.parse(apiQ('vote=${Uri.encodeComponent(k)}&v=$nv&prev=$prev')))
           .timeout(const Duration(seconds: 15));
       final d = jsonDecode(utf8.decode(r.bodyBytes));
       if (d is Map && d['ok'] == 1 && d['u'] is num && d['d'] is num) {
@@ -604,9 +621,9 @@ class App {
     R.removeWhere((k, v) => v is! num || n - v > 86400000);
     if (R.containsKey(key)) return 2;
     final q =
-        '?report=1&t=${Uri.encodeComponent(cut(e.title, 100))}&e=${Uri.encodeComponent(cut(e.eps, 40))}&r=${Uri.encodeComponent(reason)}&n=${Uri.encodeComponent(cut(note.trim(), 160))}';
+        'report=1&t=${Uri.encodeComponent(cut(e.title, 100))}&e=${Uri.encodeComponent(cut(e.eps, 40))}&r=${Uri.encodeComponent(reason)}&n=${Uri.encodeComponent(cut(note.trim(), 160))}';
     try {
-      final r = await http.get(Uri.parse(api + q)).timeout(const Duration(seconds: 15));
+      final r = await http.get(Uri.parse(apiQ(q))).timeout(const Duration(seconds: 15));
       final d = jsonDecode(utf8.decode(r.bodyBytes));
       if (d is Map && d['ok'] == 1) {
         R[key] = n;
@@ -1673,6 +1690,25 @@ class _GestS extends State<GestLayer> {
         ),
       );
 }
+
+/* ===================== ANIMASI PERGANTIAN KONTEN ===================== */
+Widget swapT(Widget c, Animation<double> a) => FadeTransition(
+    opacity: a,
+    child: SlideTransition(
+        position: Tween(begin: const Offset(0, .04), end: Offset.zero)
+            .animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+        child: c));
+
+/// baris muncul berurutan (makin bawah makin telat sedikit)
+Widget fxAt(int i, Widget c) => TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: 320 + min(i, 10) * 55),
+      curve: Curves.easeOutCubic,
+      builder: (_, v, ch) => Opacity(
+          opacity: v,
+          child: Transform.translate(offset: Offset(0, (1 - v) * 18), child: ch)),
+      child: c,
+    );
 
 /* ===================== SLIDER OTOMATIS ===================== */
 /// baris geser horizontal yang bergerak sendiri (tiap baris punya irama sendiri),
@@ -2992,6 +3028,13 @@ class _PopularTabState extends State<PopularTab> {
           chipB('Sepanjang Masa', !week, () => setState(() => week = false)),
         ]),
         const SizedBox(height: 12),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 380),
+          transitionBuilder: swapT,
+          child: Column(
+              key: ValueKey('$week-${top.isEmpty}'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
         if (top.isEmpty)
           Padding(
               padding: const EdgeInsets.all(30),
@@ -3005,7 +3048,7 @@ class _PopularTabState extends State<PopularTab> {
                         ])))
         else
           for (var i = 0; i < top.length; i++)
-            Tap(
+            fxAt(i, Tap(
               onTap: () => openDetail(context, top[i].key),
               child: Container(
                 margin: const EdgeInsets.only(bottom: 10),
@@ -3037,7 +3080,9 @@ class _PopularTabState extends State<PopularTab> {
                   ),
                 ]),
               ),
-            ),
+            )),
+              ]),
+        ),
       ],
     );
   }
@@ -3119,16 +3164,23 @@ class _CatalogTabState extends State<CatalogTab> {
         ),
         const SizedBox(height: 10),
         Expanded(
-          child: l.isEmpty
-              ? const Center(child: Text('Tidak ada konten yang cocok.'))
-              : LayoutBuilder(
-                  builder: (_, c) => GridView.builder(
-                    padding: EdgeInsets.only(bottom: navPad),
-                    itemCount: l.length,
-                    gridDelegate: gridD(c.maxWidth),
-                    itemBuilder: (_, i) => GroupCard(l[i]),
-                  ),
-                ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 380),
+            transitionBuilder: swapT,
+            child: KeyedSubtree(
+              key: ValueKey(cat),
+              child: l.isEmpty
+                  ? const Center(child: Text('Tidak ada konten yang cocok.'))
+                  : LayoutBuilder(
+                      builder: (_, c) => GridView.builder(
+                        padding: EdgeInsets.only(bottom: navPad),
+                        itemCount: l.length,
+                        gridDelegate: gridD(c.maxWidth),
+                        itemBuilder: (_, i) => GroupCard(l[i]),
+                      ),
+                    ),
+            ),
+          ),
         ),
       ]),
     );
