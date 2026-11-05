@@ -1,15 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart' show Hmac, sha256;
-import 'dart:io' show gzip;
+import 'dart:io' show Directory, File, gzip;
 import 'dart:math';
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' show ImageByteFormat, ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -167,7 +169,24 @@ Future<void> openUrl(String u) async {
   } catch (_) {}
 }
 
-/// iklan HilltopAds: dibuka di browser luar saat pengguna pindah server, jeda 10 menit
+/// kunci unik per episode (judul+eps+id/src), dijamin tidak bentrok
+/// urutan terbaru: tiap sheet kategori punya "baris terakhir" sendiri,
+/// jadi yang terbaru dari setiap sheet tampil berdampingan
+int newer(Group a, Group b) {
+  final c = a.rk.compareTo(b.rk);
+  return c != 0 ? c : b.lastId.compareTo(a.lastId);
+}
+
+String ukey(String title, String eps, String idOrSrc, Set<String> used) {
+  var k = 'e${tkey('$title|$eps|$idOrSrc')}';
+  var n = 1;
+  while (!used.add(k)) {
+    k = 'e${tkey('$title|$eps|$idOrSrc|${n++}')}';
+  }
+  return k;
+}
+
+/// iklan HilltopAds (tidak dipakai lagi): dibuka di browser luar saat pengguna pindah server, jeda 10 menit
 const hilltopUrl = 'https://idealistic-revenue.com/VFz14e';
 void hilltopAd() {
   final now = DateTime.now().millisecondsSinceEpoch;
@@ -272,6 +291,7 @@ class Ep {
   final String cat, title, eps, key, thumb, syn, gen, svn;
   final bool tipeHls;
   final List<Srv> extra;
+  final int rk; // urutan dari bawah di sheet asalnya (0 = baris terakhir)
   Ep({
     required this.id,
     required this.rid,
@@ -286,6 +306,7 @@ class Ep {
     required this.svn,
     required this.tipeHls,
     required this.extra,
+    this.rk = 0,
   });
 }
 
@@ -294,6 +315,7 @@ class Group {
   final int gi;
   String thumb = '', syn = '', gen = '';
   int lastId = 0;
+  int rk = 1 << 30;
   final List<Ep> eps = [];
   late final String base = baseTitle(title);
   Group(this.title, this.cat, this.gi);
@@ -344,6 +366,7 @@ class App {
 
   static void ingest(List raw) {
     final out = <Ep>[];
+    final usedK = <String>{};
     Map<String, String>? pp;
     for (final it in raw) {
       if (it is! Map) continue;
@@ -387,7 +410,7 @@ class App {
             .toLowerCase(),
         title: s(it['judul']),
         eps: eps,
-        key: rid.isNotEmpty ? 'id:$rid' : src,
+        key: ukey(s(it['judul']), eps, rid.isNotEmpty ? rid : src, usedK),
         thumb: s(it['thumb']),
         syn: cut(
             s(it['sinopsis']).isNotEmpty ? s(it['sinopsis']) : s(it['synopsis']),
@@ -397,6 +420,7 @@ class App {
         svn: s(it['nama1']),
         tipeHls: tp == 'hls' || tp == 'm3u8',
         extra: extra,
+        rk: int.tryParse(s(it['_r'])) ?? 0,
       ));
     }
     final gm2 = <String, Group>{};
@@ -412,6 +436,7 @@ class App {
       if (g.syn.isEmpty) g.syn = e.syn;
       if (g.gen.isEmpty) g.gen = e.gen;
       if (e.id > g.lastId) g.lastId = e.id;
+      if (e.rk < g.rk) g.rk = e.rk;
       g.eps.add(e);
     }
     for (final g in gl) {
@@ -896,6 +921,14 @@ class Store {
     }
     pos[e.key] = {'t': t, 'd': d};
     sj('pos', pos);
+  }
+
+  static void removeHist(String key) {
+    final l = hist..removeWhere((h) => h['key'] == key);
+    sj('hist', l);
+    final pos = jm('pos');
+    if (pos.remove(key) != null) sj('pos', pos);
+    App.refresh.value++;
   }
 
   static void clearHist() {
@@ -2533,6 +2566,57 @@ Future<void> main() async {
   satN.value = (Store.p.getDouble('sat') ?? 100).clamp(100.0, 200.0);
   fitN.value = Store.p.getBool('fit') ?? false;
   runApp(const LesehanApp());
+  if (Store.p.getBool('notif') ?? true) syncNotif(true);
+}
+
+/// notifikasi judul baru (cek berkala di latar belakang oleh kode native)
+Future<void> syncNotif(bool on) async {
+  try {
+    await _nat.invokeMethod('setNotif', {
+      'on': on,
+      'api': api,
+      'key': String.fromCharCodes(_ak),
+    });
+  } catch (_) {}
+}
+
+class NotifRow extends StatefulWidget {
+  const NotifRow({super.key});
+  @override
+  State<NotifRow> createState() => _NotifRowState();
+}
+
+class _NotifRowState extends State<NotifRow> {
+  bool on = Store.p.getBool('notif') ?? true;
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        decoration: BoxDecoration(
+            color: fg.withOpacity(.08), borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          Icon(Icons.notifications_active_outlined, size: 20, color: accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Notifikasi judul baru',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  Text('Dicek berkala di latar belakang',
+                      style: TextStyle(color: mut, fontSize: 11)),
+                ]),
+          ),
+          Switch(
+            value: on,
+            onChanged: (v) {
+              setState(() => on = v);
+              Store.p.setBool('notif', v);
+              syncNotif(v);
+            },
+          ),
+        ]),
+      );
 }
 
 class LesehanApp extends StatelessWidget {
@@ -2808,7 +2892,7 @@ class _HomeTabState extends State<HomeTab> {
     if (hero.isEmpty && App.groups.isNotEmpty) hero = pick();
     final hs =
         Store.hist.map((h) => App.byKey[h['key']]).whereType<Ep>().toList();
-    final latest = [...App.groups]..sort((a, b) => b.lastId.compareTo(a.lastId));
+    final latest = [...App.groups]..sort(newer);
     final kinds = [
       ['anime', 'Anime'],
       ['donghua', 'Donghua'],
@@ -3124,7 +3208,7 @@ class _CatalogTabState extends State<CatalogTab> {
             (cat == 'all' || kind(g.cat) == cat) &&
             (q.isEmpty || g.title.toLowerCase().contains(q)))
         .toList()
-      ..sort((a, b) => b.lastId.compareTo(a.lastId));
+      ..sort(newer);
     const cats = [
       ['all', 'Semua'],
       ['anime', 'Anime'],
@@ -3236,7 +3320,24 @@ class LibraryTab extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               itemCount: hs.length,
               separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (_, i) => ResumeCard(hs[i]),
+              itemBuilder: (_, i) => Stack(children: [
+                ResumeCard(hs[i]),
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => Store.removeHist(hs[i].key),
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: const BoxDecoration(
+                          color: Colors.black54, shape: BoxShape.circle),
+                      child: const Icon(Icons.close,
+                          size: 15, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ]),
             ),
           ),
         backupCard(context),
@@ -3277,6 +3378,43 @@ class ProfileTab extends StatelessWidget {
           ]),
         ),
       );
+
+  void _shareRecap(BuildContext context) {
+    final total = Store.watchSec;
+    final days = Store.wk('d');
+    final now = DateTime.now();
+    var streak = 0;
+    var d = now;
+    if ((days[Store.dayKey(d)] ?? 0) == 0) d = d.subtract(const Duration(days: 1));
+    while ((days[Store.dayKey(d)] ?? 0) > 0) {
+      streak++;
+      d = d.subtract(const Duration(days: 1));
+    }
+    final wk = <MapEntry<String, int>>[];
+    for (var i = 6; i >= 0; i--) {
+      final x = now.subtract(Duration(days: i));
+      wk.add(MapEntry(_hr[x.weekday - 1], days[Store.dayKey(x)] ?? 0));
+    }
+    final big = total >= 3600 ? '${total ~/ 3600}' : '${(total / 60).round()}';
+    final unit = total >= 3600 ? 'jam ${(total % 3600) ~/ 60} mnt' : 'menit';
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: RecapShare(
+          big: big,
+          unit: unit,
+          streak: streak,
+          nTitles: Store.wk('t').length,
+          wk: wk,
+          wSum: wk.fold<int>(0, (m, e) => m + e.value),
+          titles: [for (final e in _top('t', 3)) e.key],
+          genres: [for (final e in _top('g', 3)) e.key],
+        ),
+      ),
+    );
+  }
 
   Widget _recap() {
     final total = Store.watchSec;
@@ -3551,6 +3689,24 @@ class ProfileTab extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _recap(),
+          Tap(
+            onTap: () => _shareRecap(context),
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: accent.withOpacity(.6))),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.ios_share, size: 18, color: accent),
+                const SizedBox(width: 8),
+                const Text('Bagikan Rekap',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          ),
+          const NotifRow(),
           _theme(),
           const SizedBox(height: 8),
           Tap(
@@ -3571,6 +3727,193 @@ class ProfileTab extends StatelessWidget {
           ),
         ],
       );
+}
+
+
+/* ===================== BAGIKAN REKAP (gambar) ===================== */
+class RecapShare extends StatefulWidget {
+  final String big, unit;
+  final int streak, nTitles, wSum;
+  final List<MapEntry<String, int>> wk;
+  final List<String> titles, genres;
+  const RecapShare({
+    required this.big,
+    required this.unit,
+    required this.streak,
+    required this.nTitles,
+    required this.wk,
+    required this.wSum,
+    required this.titles,
+    required this.genres,
+    super.key,
+  });
+  @override
+  State<RecapShare> createState() => _RecapShareState();
+}
+
+class _RecapShareState extends State<RecapShare> {
+  final _k = GlobalKey();
+  bool busy = false;
+
+  Future<void> _go() async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      final b = _k.currentContext!.findRenderObject() as RenderRepaintBoundary;
+      final img = await b.toImage(pixelRatio: 3);
+      final bd = await img.toByteData(format: ImageByteFormat.png);
+      final f = File('${Directory.systemTemp.path}/rekap_lesehantv.png');
+      await f.writeAsBytes(bd!.buffer.asUint8List());
+      await Share.shareXFiles([XFile(f.path, mimeType: 'image/png')],
+          text: 'Rekap tontonanku di LesehanTV 🎧');
+    } catch (_) {
+      if (mounted) toast(context, 'Gagal membagikan rekap');
+    }
+    if (mounted) setState(() => busy = false);
+  }
+
+  static const _w = Colors.white;
+
+  @override
+  Widget build(BuildContext context) {
+    final wMax = widget.wk.fold<int>(1, (m, e) => max(m, e.value));
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      RepaintBoundary(
+        key: _k,
+        child: Container(
+          width: 320,
+          height: 470,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [const Color(0xFF0B1220), accent.withOpacity(.75)]),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset('assets/logo_icon.jpg',
+                    width: 28, height: 28, fit: BoxFit.cover),
+              ),
+              const SizedBox(width: 8),
+              const Text('LesehanTV',
+                  style: TextStyle(
+                      color: _w, fontSize: 15, fontWeight: FontWeight.w800)),
+            ]),
+            const SizedBox(height: 14),
+            const Text('🎧 Rekap Tontonanku',
+                style: TextStyle(
+                    color: _w, fontSize: 17, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(widget.big,
+                  style: const TextStyle(
+                      color: _w,
+                      fontSize: 54,
+                      height: 1,
+                      fontWeight: FontWeight.w900)),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text('${widget.unit}\nwaktu nonton',
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 12, height: 1.3)),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                  child: Text('🔥 ${widget.streak} hari beruntun',
+                      style: const TextStyle(color: _w, fontSize: 13))),
+              Expanded(
+                  child: Text('🎬 ${widget.nTitles} judul',
+                      style: const TextStyle(color: _w, fontSize: 13))),
+            ]),
+            const SizedBox(height: 14),
+            Text('Minggu ini · ${fmtDur(widget.wSum)}',
+                style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 70,
+              child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    for (final e in widget.wk)
+                      Expanded(
+                        child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Container(
+                                width: 16,
+                                height:
+                                    e.value == 0 ? 4 : 8 + 40 * e.value / wMax,
+                                decoration: BoxDecoration(
+                                    color: e.value == 0
+                                        ? Colors.white24
+                                        : _w,
+                                    borderRadius: BorderRadius.circular(5)),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(e.key,
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 9)),
+                            ]),
+                      ),
+                  ]),
+            ),
+            if (widget.titles.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('Judul teratas',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              for (var i = 0; i < widget.titles.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Text('${i + 1}. ${widget.titles[i]}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: _w, fontSize: 13, fontWeight: FontWeight.w600)),
+                ),
+            ],
+            if (widget.genres.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('Genre favorit: ${widget.genres.join(' · ')}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 11)),
+              ),
+            const Spacer(),
+            const Text('Nonton santai di LesehanTV',
+                style: TextStyle(color: Colors.white54, fontSize: 10)),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 12),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        FilledButton.icon(
+          onPressed: busy ? null : _go,
+          icon: const Icon(Icons.ios_share, size: 18),
+          label: Text(busy ? 'Menyiapkan…' : 'Bagikan'),
+        ),
+        const SizedBox(width: 10),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup')),
+      ]),
+    ]);
+  }
 }
 
 /* ===================== SUKA / TIDAK SUKA ===================== */
@@ -4348,7 +4691,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     itemBuilder: (_, i) => chipB(names[i], sv == i, () {
                       if (sv == i) return;
                       sv = i;
-                      hilltopAd();
                       start();
                     }),
                   ),
