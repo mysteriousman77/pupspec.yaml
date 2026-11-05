@@ -1628,6 +1628,293 @@ class _GestS extends State<GestLayer> {
       );
 }
 
+/* ===================== SKELETON & PEMILIH TONTONAN ===================== */
+class Skel extends StatefulWidget {
+  final double? w, h;
+  final double r;
+  const Skel({this.w, this.h, this.r = 12, super.key});
+  @override
+  State<Skel> createState() => _SkelS();
+}
+
+class _SkelS extends State<Skel> with SingleTickerProviderStateMixin {
+  late final AnimationController c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1300))
+    ..repeat();
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = (isLight ? Colors.black : Colors.white).withOpacity(.07);
+    final hi = (isLight ? Colors.black : Colors.white).withOpacity(.2);
+    return AnimatedBuilder(
+      animation: c,
+      builder: (_, __) => Container(
+        width: widget.w,
+        height: widget.h,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.r),
+          gradient: LinearGradient(
+              begin: Alignment(-2.5 + 4 * c.value, 0),
+              end: Alignment(-1.5 + 4 * c.value, 0),
+              colors: [base, hi, base]),
+        ),
+      ),
+    );
+  }
+}
+
+/// kerangka tampilan pemutar saat video dimuat
+class PlayerSkel extends StatelessWidget {
+  const PlayerSkel({super.key});
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        const Skel(r: 0),
+        Center(
+          child: Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+                shape: BoxShape.circle, color: Colors.black.withOpacity(.35)),
+            child: const Icon(Icons.play_arrow_rounded,
+                color: Colors.white70, size: 38),
+          ),
+        ),
+        Positioned(
+          left: 14,
+          right: 14,
+          bottom: 12,
+          child: Row(children: [
+            const Skel(w: 34, h: 8, r: 4),
+            const SizedBox(width: 10),
+            const Expanded(child: Skel(h: 6, r: 3)),
+            const SizedBox(width: 10),
+            const Skel(w: 34, h: 8, r: 4),
+          ]),
+        ),
+      ]);
+}
+
+Future<void> confirmClear(BuildContext c) async {
+  final ya = await showDialog<bool>(
+    context: c,
+    builder: (d) => AlertDialog(
+      backgroundColor: isLight ? Colors.white : const Color(0xFF15151C),
+      title: const Text('Hapus semua riwayat?'),
+      content: const Text(
+          'Seluruh riwayat tontonan dan posisi terakhir akan dihapus. Tindakan ini tidak bisa dibatalkan.'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(d, false), child: const Text('Tidak')),
+        FilledButton(
+            onPressed: () => Navigator.pop(d, true), child: const Text('Ya, hapus')),
+      ],
+    ),
+  );
+  if (ya == true) Store.clearHist();
+}
+
+/// kartu ajakan di Beranda
+Widget pickerCard(BuildContext c) => Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Tap(
+        onTap: () => showModalBottomSheet(
+            context: c,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (_) => const PickerSheet()),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+              gradient: LinearGradient(colors: [
+                accent.withOpacity(.32),
+                curTh.g2.withOpacity(.16)
+              ]),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: accent.withOpacity(.5))),
+          child: Row(children: [
+            const Text('🎲', style: TextStyle(fontSize: 28)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Bingung mau nonton apa?',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                Text('Biar kami pilihkan tontonan acak untukmu',
+                    style: TextStyle(color: mut, fontSize: 12)),
+              ]),
+            ),
+            Icon(Icons.chevron_right_rounded, color: accent),
+          ]),
+        ),
+      ),
+    );
+
+class PickerSheet extends StatefulWidget {
+  const PickerSheet({super.key});
+  @override
+  State<PickerSheet> createState() => _PickerS();
+}
+
+class _PickerS extends State<PickerSheet> {
+  String cat = 'all';
+  Group? g;
+  bool spin = false;
+  Timer? _t;
+  final _r = Random();
+
+  List<Group> _pool() => App.groups
+      .where((x) => cat == 'all' || kind(x.cat) == cat)
+      .toList();
+
+  @override
+  void initState() {
+    super.initState();
+    _roll();
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  void _roll() {
+    final l = _pool();
+    _t?.cancel();
+    if (l.isEmpty) {
+      setState(() => g = null);
+      return;
+    }
+    var n = 0;
+    setState(() => spin = true);
+    _t = Timer.periodic(const Duration(milliseconds: 90), (tm) {
+      n++;
+      Group x = l[_r.nextInt(l.length)];
+      if (n >= 9 && l.length > 1) {
+        while (x == g) {
+          x = l[_r.nextInt(l.length)];
+        }
+      }
+      if (!mounted) return tm.cancel();
+      setState(() {
+        g = x;
+        if (n >= 9) spin = false;
+      });
+      if (n >= 9) tm.cancel();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final x = g;
+    final cats = [
+      ['all', 'Semua'],
+      ['anime', 'Anime'],
+      ['donghua', 'Donghua'],
+      ['drama', 'Drama'],
+      ['movie', 'Film'],
+    ];
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: EdgeInsets.fromLTRB(
+              18, 12, 18, 20 + MediaQuery.of(context).padding.bottom),
+          decoration: BoxDecoration(
+              color: (isLight ? Colors.white : const Color(0xFF0E0E14))
+                  .withOpacity(.82),
+              border: Border(
+                  top: BorderSide(color: Colors.white.withOpacity(.2)))),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: fg.withOpacity(.25),
+                    borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 14),
+            const Text('🎲 Bingung mau nonton apa?',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 42,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: cats.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) => chipB(cats[i][1], cat == cats[i][0], () {
+                  cat = cats[i][0];
+                  _roll();
+                }),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (x == null)
+              const Padding(
+                  padding: EdgeInsets.all(30),
+                  child: Text('Belum ada tontonan di kategori ini.'))
+            else ...[
+              AnimatedScale(
+                scale: spin ? .94 : 1,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutBack,
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Stack(fit: StackFit.expand, children: [
+                    poster(x.thumb, radius: 18),
+                    Positioned(top: 8, left: 8, child: pill(x.cat)),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(x.title,
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(
+                  '${x.eps.length} Eps${x.gen.isEmpty ? '' : '  •  ${x.gen}'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: mut, fontSize: 12)),
+              const SizedBox(height: 16),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: spin ? null : _roll,
+                    icon: const Icon(Icons.casino_outlined),
+                    label: const Text('Acak Lagi'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: spin
+                        ? null
+                        : () {
+                            final nav = Navigator.of(context);
+                            nav.pop();
+                            openDetail(nav.context, x);
+                          },
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('Lihat'),
+                  ),
+                ),
+              ]),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
 /* ===================== SPLASH ===================== */
 const _spBg = Color(0xFF0C2340);
 const _spGold1 = Color(0xFFE3A653);
@@ -1761,25 +2048,19 @@ class Splash extends StatefulWidget {
 
 class _SplashS extends State<Splash> {
   VideoPlayerController? v;
-  bool ok = false, fin = false;
+  bool fin = false;
 
   @override
   void initState() {
     super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    try {
-      final c = VideoPlayerController.asset('assets/splash.mp4');
+    final c = splashCtl;
+    if (c != null && c.value.isInitialized) {
       v = c;
-      await c.initialize();
-      await c.setVolume(0);
+      c.setVolume(0);
       c.addListener(_tick);
-      await c.play();
-      if (mounted) setState(() => ok = true);
-    } catch (_) {
-      Future.delayed(const Duration(milliseconds: 2200), _end);
+      c.play();
+    } else {
+      Future.delayed(const Duration(milliseconds: 1200), _end);
     }
   }
 
@@ -1796,7 +2077,6 @@ class _SplashS extends State<Splash> {
   void _end() {
     if (fin) return;
     fin = true;
-    if (mounted) setState(() {});
     widget.onDone();
   }
 
@@ -1804,46 +2084,44 @@ class _SplashS extends State<Splash> {
   void dispose() {
     v?.removeListener(_tick);
     v?.dispose();
+    splashCtl = null;
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!ok) return const SplashLogo();
-    final s = v!.value.size;
+    final c = v;
+    if (c == null) return const Scaffold(backgroundColor: Colors.black);
+    final s = c.value.size;
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(fit: StackFit.expand, children: [
-        FittedBox(
+      body: SizedBox.expand(
+        child: FittedBox(
           fit: BoxFit.cover,
           clipBehavior: Clip.hardEdge,
-          child: SizedBox(
-              width: s.width, height: s.height, child: VideoPlayer(v!)),
+          child: SizedBox(width: s.width, height: s.height, child: VideoPlayer(c)),
         ),
-        if (fin)
-          const Positioned(
-            left: 0,
-            right: 0,
-            bottom: 60,
-            child: Center(
-              child: SizedBox(
-                width: 150,
-                child: LinearProgressIndicator(
-                    minHeight: 3,
-                    color: _spGold1,
-                    backgroundColor: Colors.white12),
-              ),
-            ),
-          ),
-      ]),
+      ),
     );
   }
 }
 
 /* ===================== APLIKASI ===================== */
+/// video splash dimuat sebelum tampilan pertama, jadi langsung main tanpa loading lain
+VideoPlayerController? splashCtl;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Store.init();
+  final si = Store.init();
+  try {
+    final c = VideoPlayerController.asset('assets/splash.mp4');
+    splashCtl = c;
+    await c.initialize().timeout(const Duration(seconds: 3));
+  } catch (_) {
+    splashCtl?.dispose();
+    splashCtl = null;
+  }
+  await si;
   final sv = Store.p.getString('theme');
   curTh = themes.firstWhere((t) => t.id == sv, orElse: () => themes[0]);
   themeId.value = curTh.id;
@@ -2238,6 +2516,7 @@ class _HomeTabState extends State<HomeTab> {
                 ),
             ]),
           ),
+        pickerCard(context),
         if (hs.isNotEmpty)
           section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList(),
               more: () => App.tab.value = 3),
@@ -2511,7 +2790,8 @@ class LibraryTab extends StatelessWidget {
               style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
           if (hs.isNotEmpty)
             TextButton(
-                onPressed: Store.clearHist, child: const Text('Hapus Semua')),
+                onPressed: () => confirmClear(context),
+                child: const Text('Hapus Semua')),
         ]),
         const SizedBox(height: 10),
         if (hs.isEmpty)
@@ -3461,9 +3741,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Widget _video() {
-    if (loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    if (loading) return const PlayerSkel();
     if (err != null) {
       final n = 1 + ep.extra.length;
       return Center(
