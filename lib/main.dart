@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
 
@@ -176,7 +177,7 @@ String baseTitle(String t) {
       .replaceAll(RegExp(r'\([^)]*\)|\[[^\]]*\]'), ' ')
       .replaceAll(_noise, ' ')
       .replaceAll(RegExp(r'\b\d+(st|nd|rd|th)\b'), ' ')
-      .replaceAll(RegExp(r'\bs\d+\b'), ' ');
+      .replaceAll(RegExp(r'\b[rs]\d+\b'), ' ');
   x = x
       .replaceAll(RegExp(r'[^\p{L}\p{N} ]+', unicode: true), ' ')
       .replaceAll(RegExp(r'\s+'), ' ')
@@ -190,10 +191,10 @@ String baseTitle(String t) {
 
 int seasonNo(String t) {
   final m = RegExp(
-          r'season\s*(\d+)|\bs(\d+)\b|(\d+)(?:st|nd|rd|th)\s*season|part\s*(\d+)|\s(\d+)\s*(?:\([^)]*\))?\s*$')
+          r'season\s*(\d+)|\bs(\d+)\b|(\d+)(?:st|nd|rd|th)\s*season|part\s*(\d+)|\s(\d+)\s*(?:\([^)]*\))?\s*$|\br(\d+)\b')
       .firstMatch(t.toLowerCase());
   if (m == null) return 1;
-  for (var i = 1; i <= 5; i++) {
+  for (var i = 1; i <= 6; i++) {
     final g = m.group(i);
     if (g != null) return int.tryParse(g) ?? 1;
   }
@@ -206,7 +207,15 @@ bool relB(String a, String b) {
   if (a == b || (cmpT(a) == cmpT(b) && cmpT(a).length >= 4)) return true;
   final sh = a.length <= b.length ? a : b;
   final lg = a.length <= b.length ? b : a;
-  return sh.length >= 6 && lg.startsWith('$sh ');
+  if (sh.length >= 6 && lg.startsWith('$sh ')) return true;
+  // judul seri sama dengan subjudul berbeda: minimal 3 kata awal sama & panjang >= 14
+  final wa = a.split(' '), wb = b.split(' ');
+  var n = 0;
+  while (n < wa.length && n < wb.length && wa[n] == wb[n]) {
+    n++;
+  }
+  final pre = wa.take(n).join(' ');
+  return n >= 3 && pre.length >= 14;
 }
 
 int lev(String a, String b) {
@@ -622,12 +631,23 @@ class App {
     final pool =
         groups.where((x) => !ids.contains(x.title) && x.thumb.isNotEmpty).toList();
     final rnd = Random();
-    final same = pool.where((x) => kind(x.cat) == kind(g.cat)).toList()
+    // nama mirip (kata awal sama / kemiripan tinggi) didahulukan, lalu acak
+    double sc(Group x) {
+      final fa = g.base.split(' ').first, fb = x.base.split(' ').first;
+      final s0 = simT(g.base, x.base);
+      return s0 + (fa.length >= 4 && fa == fb ? .5 : 0);
+    }
+
+    final sim = pool.where((x) => sc(x) >= .6).toList()
+      ..sort((a, b) => sc(b).compareTo(sc(a)));
+    final simIds = sim.take(4).toSet();
+    final rest = pool.where((x) => !simIds.contains(x)).toList();
+    final same = rest.where((x) => kind(x.cat) == kind(g.cat)).toList()
       ..shuffle(rnd);
-    final other = pool.where((x) => kind(x.cat) != kind(g.cat)).toList()
+    final other = rest.where((x) => kind(x.cat) != kind(g.cat)).toList()
       ..shuffle(rnd);
-    return _recCache[g.title] =
-        Recs(rel.take(12).toList(), [...same, ...other].take(12).toList());
+    return _recCache[g.title] = Recs(rel.take(12).toList(),
+        [...simIds, ...same, ...other].take(12).toList());
   }
 
   /* ----- sinopsis & genre film dari TMDB ----- */
@@ -1040,7 +1060,7 @@ class GroupCard extends StatelessWidget {
 }
 
 Widget section(String title, List<Widget> kids,
-        {double h = 165, VoidCallback? more}) =>
+        {double h = 165, VoidCallback? more, bool auto = true}) =>
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1063,7 +1083,7 @@ Widget section(String title, List<Widget> kids,
         ),
         SizedBox(
           height: h,
-          child: AutoRow(count: kids.length, item: (_, i) => kids[i]),
+          child: AutoRow(count: kids.length, auto: auto, item: (_, i) => kids[i]),
         ),
       ],
     );
@@ -1660,7 +1680,13 @@ class AutoRow extends StatefulWidget {
   final int count;
   final double gap;
   final IndexedWidgetBuilder item;
-  const AutoRow({required this.count, required this.item, this.gap = 10, super.key});
+  final bool auto;
+  const AutoRow(
+      {required this.count,
+      required this.item,
+      this.gap = 10,
+      this.auto = true,
+      super.key});
   @override
   State<AutoRow> createState() => _AutoRowS();
 }
@@ -1677,6 +1703,11 @@ class _AutoRowS extends State<AutoRow> {
   void initState() {
     super.initState();
     final k = _n++;
+    if (!widget.auto) {
+      period = 0;
+      delay = 0;
+      return;
+    }
     period = 3600 + (k * 730) % 2900; // 3,6 - 6,5 detik, beda tiap baris
     delay = 600 + (k * 1170) % 3200; // mulai bergantian
     _t = Timer(Duration(milliseconds: delay), () {
@@ -1717,11 +1748,11 @@ class _AutoRowS extends State<AutoRow> {
         onPointerDown: (_) => touch = true,
         onPointerUp: (_) {
           touch = false;
-          resumeAt = DateTime.now().millisecondsSinceEpoch + 5000;
+          resumeAt = DateTime.now().millisecondsSinceEpoch + 3000;
         },
         onPointerCancel: (_) {
           touch = false;
-          resumeAt = DateTime.now().millisecondsSinceEpoch + 5000;
+          resumeAt = DateTime.now().millisecondsSinceEpoch + 3000;
         },
         child: ListView.separated(
           controller: sc,
@@ -1797,9 +1828,9 @@ Widget fitWrap(Widget child, double va) => ValueListenableBuilder<bool>(
     );
 
 /* ===================== CADANGAN DATA ===================== */
-Future<bool> saveBackup(String name, String text) async {
+Future<bool> saveBackup(String name, String b64) async {
   try {
-    return (await _nat.invokeMethod('saveFile', {'name': name, 'text': text})) ==
+    return (await _nat.invokeMethod('saveFile', {'name': name, 'b64': b64})) ==
         true;
   } catch (_) {
     return false;
@@ -1814,11 +1845,36 @@ Future<String?> pickBackup() async {
   }
 }
 
+/// format cadangan: biner terkompres & disandikan (tidak bisa dibaca di aplikasi teks)
+final _bk = utf8.encode('LesehanTV-cadangan-2026');
+List<int> _mask(List<int> b) => [
+      for (var i = 0; i < b.length; i++)
+        b[i] ^ _bk[i % _bk.length] ^ ((i * 31 + 7) & 0xFF)
+    ];
+
+String packBackup(Map<String, dynamic> d) {
+  final raw = gzip.encode(utf8.encode(jsonEncode(d)));
+  return base64Encode([0x4C, 0x54, 0x56, 1, ..._mask(raw)]);
+}
+
+Map<String, dynamic>? unpackBackup(String b64) {
+  try {
+    final b = base64Decode(b64.trim());
+    if (b.length < 6 || b[0] != 0x4C || b[1] != 0x54 || b[2] != 0x56) {
+      return null;
+    }
+    final raw = gzip.decode(_mask(b.sublist(4)));
+    return Map<String, dynamic>.from(jsonDecode(utf8.decode(raw)));
+  } catch (_) {
+    return null;
+  }
+}
+
+/// tidak memuat sumber video (src); hanya judul, kunci acak (hash), posisi, dan rekap
 Map<String, dynamic> backupData() => {
       'app': 'LesehanTV',
       'jenis': 'cadangan',
       'v': 1,
-      'pesan': 'Cadangan data LesehanTV. Jangan diubah manual.',
       'dibuat': DateTime.now().toIso8601String(),
       'bookmark': Store.bms,
       'riwayat': Store.hist,
@@ -1830,19 +1886,16 @@ Map<String, dynamic> backupData() => {
 Future<void> exportBackup(BuildContext c) async {
   final d = DateTime.now();
   String two(int n) => n.toString().padLeft(2, '0');
-  final name = 'LesehanTV-Cadangan-${d.year}${two(d.month)}${two(d.day)}.json';
-  final ok = await saveBackup(name, jsonEncode(backupData()));
+  final name = 'LesehanTV-Cadangan-${d.year}${two(d.month)}${two(d.day)}.lesehantv';
+  final ok = await saveBackup(name, packBackup(backupData()));
   if (c.mounted && ok) toast(c, '✅ Cadangan tersimpan: $name');
 }
 
 Future<void> importBackup(BuildContext c) async {
   final txt = await pickBackup();
   if (txt == null || !c.mounted) return;
-  Map<String, dynamic> d;
-  try {
-    d = Map<String, dynamic>.from(jsonDecode(txt));
-    if (d['app'] != 'LesehanTV' || d['jenis'] != 'cadangan') throw 'x';
-  } catch (_) {
+  final d = unpackBackup(txt);
+  if (d == null || d['app'] != 'LesehanTV' || d['jenis'] != 'cadangan') {
     toast(c, 'Bukan file cadangan LesehanTV');
     return;
   }
@@ -2528,8 +2581,12 @@ class _RootState extends State<Root> {
     final ok = RegExp(r'^https?://', caseSensitive: false).hasMatch(lk);
     showDialog(
       context: context,
-      barrierColor: Colors.black.withOpacity(.8),
-      builder: (c) => GestureDetector(
+      barrierColor: Colors.transparent,
+      builder: (c) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: ColoredBox(
+          color: Colors.black.withOpacity(.4),
+          child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
           if (ok) openUrl(lk);
@@ -2567,6 +2624,8 @@ class _RootState extends State<Root> {
               ),
             ),
           ),
+        ),
+      ),
         ),
       ),
     );
@@ -2676,6 +2735,7 @@ class _HomeTabState extends State<HomeTab> {
         child: AutoRow(
           count: top.length,
           gap: 8,
+          auto: false,
           item: (_, i) => t10Item(context, i, top[i].key, top[i].value),
         ),
       ),
@@ -2835,10 +2895,12 @@ class _HomeTabState extends State<HomeTab> {
         pickerCard(context),
         if (hs.isNotEmpty)
           section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList(),
+              auto: false,
               more: () => App.tab.value = 3),
         top10(),
         section('Baru Ditambahkan',
             latest.take(12).map((g) => GroupCard(g, width: 190)).toList(),
+            auto: false,
             more: () => goCat('all')),
         for (final k in kinds)
           Builder(builder: (_) {
@@ -3793,6 +3855,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   static final List<_PlayerPageState> stack = [];
   static _PlayerPageState? get top => stack.isEmpty ? null : stack.last;
 
+  bool _pb = Store.p.getBool('popblock') ?? true;
+  bool _web1 = false;
+  int _loadedAt = 0;
+  static const _popJs =
+      r'''(function(){try{window.open=function(){return null};}catch(e){}})();''';
+  static String _rd(String h) {
+    final p = h.split('.');
+    return p.length <= 2 ? h : p.sublist(p.length - 2).join('.');
+  }
+
   static const _fsJs = r'''(function(){if(window.__lfs)return;window.__lfs=1;function f(){var e=document.fullscreenElement||document.webkitFullscreenElement;LesehanFS.postMessage(e?'1':'0');}document.addEventListener('fullscreenchange',f);document.addEventListener('webkitfullscreenchange',f);})();''';
 
   /// jeda video saat halaman lain (Detail/pemutar lain) menutupi pemutar ini
@@ -3941,6 +4013,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         );
       } else {
         final host = Uri.parse(url).host;
+        _web1 = false;
+        _loadedAt = 0;
         wc = WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
           ..setBackgroundColor(Colors.black)
@@ -3953,18 +4027,31 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             }
           })
           ..setNavigationDelegate(NavigationDelegate(
+              onPageStarted: (_) {
+                if (_pb) wc?.runJavaScript(_popJs).catchError((_) {});
+              },
               onPageFinished: (_) {
+                _loadedAt = DateTime.now().millisecondsSinceEpoch;
+                _web1 = true;
                 wc?.runJavaScript(_fsJs).catchError((_) {});
+                if (_pb) wc?.runJavaScript(_popJs).catchError((_) {});
                 _applyWeb();
               },
               onNavigationRequest: (r) {
-            // blokir popup/pengalihan iklan: hanya halaman utama server yang boleh
-            if (!r.isMainFrame) return NavigationDecision.navigate;
-            final h = Uri.tryParse(r.url)?.host ?? '';
-            return (h == host || r.url == url)
-                ? NavigationDecision.navigate
-                : NavigationDecision.prevent;
-          }))
+                final u = Uri.tryParse(r.url);
+                if (u == null || (u.scheme != 'http' && u.scheme != 'https')) {
+                  return NavigationDecision.prevent;
+                }
+                if (!r.isMainFrame || !_pb) return NavigationDecision.navigate;
+                // pengalihan awal server (sebelum halaman selesai / 3 detik pertama) diizinkan
+                final now = DateTime.now().millisecondsSinceEpoch;
+                if (!_web1 || now - _loadedAt < 3000) {
+                  return NavigationDecision.navigate;
+                }
+                return (_rd(u.host) == _rd(host) || r.url == url)
+                    ? NavigationDecision.navigate
+                    : NavigationDecision.prevent;
+              }))
           ..loadRequest(Uri.parse(url));
         Store.markSeen(ep.key);
       }
@@ -4115,7 +4202,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Widget _web() => Stack(fit: StackFit.expand, children: [
-        WebViewWidget(key: _wvKey, controller: wc!),
+        GestLayer(child: WebViewWidget(key: _wvKey, controller: wc!)),
         Positioned(
           top: 6,
           right: 6,
@@ -4266,6 +4353,23 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             chipB('Regang', st, () => setFit(true)),
           ]),
         ),
+        if (wc != null)
+          Row(children: [
+            Icon(Icons.shield_outlined, size: 18, color: accent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Blokir pop-up iklan (disarankan)',
+                  style: TextStyle(color: mut, fontSize: 12)),
+            ),
+            Switch(
+              value: _pb,
+              onChanged: (v) {
+                setState(() => _pb = v);
+                Store.p.setBool('popblock', v);
+                start();
+              },
+            ),
+          ]),
         ValueListenableBuilder<double>(
           valueListenable: satN,
           builder: (_, v, __) => Row(children: [
