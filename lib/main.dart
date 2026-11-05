@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 const api =
     'https://script.google.com/macros/s/AKfycbycxushyypYFF1FptMeQYXRcldkioUTsHXg6-l69LamTBvK_BPjP5w5NHa8XK3_Cuc/exec';
@@ -4053,6 +4054,27 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     : NavigationDecision.prevent;
               }))
           ..loadRequest(Uri.parse(url));
+        final pf = wc!.platform;
+        if (pf is AndroidWebViewController) {
+          pf.setCustomWidgetCallbacks(
+            onShowCustomWidget: (Widget w, void Function() hide) {
+              if (!mounted) return;
+              setState(() {
+                _cw = w;
+                _cwHide = hide;
+              });
+              _enterFs();
+            },
+            onHideCustomWidget: () {
+              if (!mounted) return;
+              setState(() {
+                _cw = null;
+                _cwHide = null;
+              });
+              _exitFs();
+            },
+          );
+        }
         Store.markSeen(ep.key);
       }
       Store.touchHist(ep);
@@ -4305,8 +4327,32 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               if (g != null) recSection(g),
       ]);
 
+  Widget? _cw;
+  VoidCallback? _cwHide;
+
   @override
   Widget build(BuildContext context) {
+    final core = _core(context);
+    if (_cw == null) return core;
+    // layar penuh bawaan embed: ditampilkan di sini agar gestur volume/kecerahan tetap jalan
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _cwHide?.call();
+      },
+      child: Stack(fit: StackFit.expand, children: [
+        core,
+        Positioned.fill(
+          child: Material(
+            color: Colors.black,
+            child: GestLayer(child: _cw!),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _core(BuildContext context) {
     if (_fs && wc != null) {
       return PopScope(
         canPop: false,
