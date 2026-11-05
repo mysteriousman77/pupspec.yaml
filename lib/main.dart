@@ -148,6 +148,16 @@ Future<void> openUrl(String u) async {
   } catch (_) {}
 }
 
+/// iklan HilltopAds: dibuka di browser luar saat pengguna pindah server, jeda 10 menit
+const hilltopUrl = 'https://idealistic-revenue.com/VFz14e';
+void hilltopAd() {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final last = Store.p.getInt('ht_last') ?? 0;
+  if (now - last < 600000) return;
+  Store.p.setInt('ht_last', now);
+  openUrl(hilltopUrl);
+}
+
 void toast(BuildContext c, String m) {
   ScaffoldMessenger.of(c)
     ..hideCurrentSnackBar()
@@ -1886,6 +1896,25 @@ class _RootState extends State<Root> {
     super.dispose();
   }
 
+  Future<void> _askExit() async {
+    final ya = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: isLight ? Colors.white : const Color(0xFF15151C),
+        title: const Text('Keluar aplikasi?'),
+        content: const Text('Yakin ingin keluar dari LesehanTV?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Tidak')),
+          FilledButton(
+              onPressed: () => Navigator.pop(c, true), child: const Text('Ya')),
+        ],
+      ),
+    );
+    if (ya == true) SystemNavigator.pop();
+  }
+
   Future<void> _popup() async {
     final pp = App.popup;
     if (pp == null || App.popDone) return;
@@ -1987,7 +2016,17 @@ class _RootState extends State<Root> {
               ProfileTab(),
             ]);
           }
-          return Scaffold(
+          return PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, _) {
+              if (didPop) return;
+              if (i != 0) {
+                App.tab.value = 0;
+              } else {
+                _askExit();
+              }
+            },
+            child: Scaffold(
             body: Stack(children: [
               const Positioned.fill(child: GlowBg()),
               SafeArea(bottom: false, child: body),
@@ -1998,7 +2037,7 @@ class _RootState extends State<Root> {
                   bottom: 14 + MediaQuery.of(context).padding.bottom,
                   child: FloatNav(i, (v) => App.tab.value = v),
                 ),
-            ]),
+            ]),)
           );
         },
       );
@@ -3526,6 +3565,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     itemBuilder: (_, i) => chipB(names[i], sv == i, () {
                       if (sv == i) return;
                       sv = i;
+                      hilltopAd();
                       start();
                     }),
                   ),
