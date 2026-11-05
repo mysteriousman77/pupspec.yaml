@@ -40,6 +40,7 @@ jobs:
           package com.lesehantv.lesehantv
 
           import android.content.Context
+          import android.content.Intent
           import android.media.AudioManager
           import android.provider.Settings
           import android.view.WindowManager
@@ -48,6 +49,9 @@ jobs:
           import io.flutter.plugin.common.MethodChannel
 
           class MainActivity : FlutterActivity() {
+              private var pending: MethodChannel.Result? = null
+              private var pendingText: String? = null
+
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
                   MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lesehan/native")
@@ -81,9 +85,52 @@ jobs:
                                   window.attributes = lp
                                   result.success(null)
                               }
+                              "saveFile" -> {
+                                  pending = result
+                                  pendingText = call.argument<String>("text")
+                                  val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+                                  i.addCategory(Intent.CATEGORY_OPENABLE)
+                                  i.type = "application/json"
+                                  i.putExtra(Intent.EXTRA_TITLE, call.argument<String>("name"))
+                                  startActivityForResult(i, 7001)
+                              }
+                              "pickFile" -> {
+                                  pending = result
+                                  val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                                  i.addCategory(Intent.CATEGORY_OPENABLE)
+                                  i.type = "*/*"
+                                  startActivityForResult(i, 7002)
+                              }
                               else -> result.notImplemented()
                           }
                       }
+              }
+
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode != 7001 && requestCode != 7002) return
+                  val r = pending
+                  pending = null
+                  val uri = data?.data
+                  if (resultCode != RESULT_OK || uri == null) {
+                      if (requestCode == 7001) r?.success(false) else r?.success(null)
+                      return
+                  }
+                  try {
+                      if (requestCode == 7001) {
+                          contentResolver.openOutputStream(uri)?.use {
+                              it.write((pendingText ?: "").toByteArray(Charsets.UTF_8))
+                          }
+                          r?.success(true)
+                      } else {
+                          val txt = contentResolver.openInputStream(uri)?.use {
+                              String(it.readBytes(), Charsets.UTF_8)
+                          }
+                          r?.success(txt)
+                      }
+                  } catch (e: Exception) {
+                      if (requestCode == 7001) r?.success(false) else r?.success(null)
+                  }
               }
           }
           KOT
