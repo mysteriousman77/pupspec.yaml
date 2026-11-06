@@ -291,7 +291,7 @@ class Ep {
   final String cat, title, eps, key, thumb, syn, gen, svn;
   final bool tipeHls;
   final List<Srv> extra;
-  final int rk; // urutan dari bawah di sheet asalnya (0 = baris terakhir)
+  int rk; // urutan dari bawah di sheet asalnya (0 = baris terakhir)
   Ep({
     required this.id,
     required this.rid,
@@ -423,6 +423,17 @@ class App {
         rk: int.tryParse(s(it['_r'])) ?? 0,
       ));
     }
+    // cadangan: kalau server tidak mengirim _r, hitung urutan terbaru per kategori dari urutan baris
+    if (out.isNotEmpty && out.every((e) => e.rk == 0)) {
+      final tot = <String, int>{}, seen = <String, int>{};
+      for (final e in out) {
+        tot[e.cat] = (tot[e.cat] ?? 0) + 1;
+      }
+      for (final e in out) {
+        seen[e.cat] = (seen[e.cat] ?? 0) + 1;
+        e.rk = tot[e.cat]! - seen[e.cat]!;
+      }
+    }
     final gm2 = <String, Group>{};
     final gl = <Group>[];
     for (final e in out) {
@@ -488,6 +499,7 @@ class App {
       ingest(d);
       loaded = true;
       Store.p.setString('cache', body);
+      Store.ping();
     } catch (_) {
       if (!loaded) error = 'Gagal mengambil data. Periksa koneksi lalu coba lagi.';
     }
@@ -587,6 +599,25 @@ class App {
     final u = s(d is Map ? d['src'] : '');
     if (u.isEmpty) throw 'kosong';
     return u;
+  }
+
+  /// catat 1 pengunjung unik per hari (ID acak anonim, tanpa data pribadi)
+  static void ping() {
+    try {
+      final today = DateTime.now().toUtc().add(const Duration(hours: 7));
+      final ds = '${today.year}${today.month}${today.day}';
+      if (Store.p.getString('pg_day') == ds) return;
+      var id = Store.p.getString('pg_id');
+      if (id == null) {
+        final r = Random();
+        id = List.generate(10, (_) => r.nextInt(36).toRadixString(36)).join();
+        Store.p.setString('pg_id', id);
+      }
+      Store.p.setString('pg_day', ds);
+      unawaited(http
+          .get(Uri.parse(apiQ('ping=$id')))
+          .then((_) {}, onError: (_) {}));
+    } catch (_) {}
   }
 
   static void regView(String title) {
