@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # perubahan halaman web saja tidak memicu build APK
+    paths-ignore:
+      - "index.html"
+      - "*.md"
 
 jobs:
   build:
@@ -391,7 +395,7 @@ jobs:
             echo "KEYSTORE_B64 belum diisi: APK memakai kunci acak (update harus uninstall dulu)"
           fi
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: lesehantv-apk
           path: build/app/outputs/flutter-apk/app-release.apk
