@@ -27,6 +27,9 @@ const tmdbKey = '9f660b069ce86b86c8b671b14338d3b2';
 const _akb = [57, 98, 62, 59, 60, 109, 63, 108, 62, 107, 62, 63, 108, 59, 107, 99, 62, 109, 60, 63, 60, 105, 109, 63, 57, 106, 106, 63, 60, 98, 98, 60, 62, 105, 106, 60, 57, 63, 98, 57, 59, 110, 109, 106, 57, 106, 104, 108];
 final List<int> _ak = [for (final c in _akb) c ^ 0x5A];
 
+/// nomor build (diisi otomatis oleh GitHub Actions lewat --dart-define=BUILD=...)
+const int kBuild = int.fromEnvironment('BUILD', defaultValue: 0);
+
 /// bangun URL API bertanda waktu + tanda tangan HMAC; server menolak permintaan tanpa token valid
 String apiQ(String q) {
   final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
@@ -467,6 +470,8 @@ class App {
   static bool statsOk = false, _sb = false;
   static int _sl = 0;
   static List<Map<String, String>> info = [];
+  static Map<String, dynamic>? upd; // {min, url, msg, force} dari sheet Update
+  static bool updShown = false;
   static Timer? _poll;
 
   static Future<void> load() async {
@@ -555,6 +560,15 @@ class App {
   }
 
   static void applyInfo(dynamic d) {
+    if (d is Map && d['upd'] is Map) {
+      final u = d['upd'] as Map;
+      upd = {
+        'min': int.tryParse(s(u['min'])) ?? 0,
+        'url': s(u['url']),
+        'msg': s(u['msg']),
+        'force': s(u['force']) != '0',
+      };
+    }
     if (d is Map && d['info'] is List) {
       info = (d['info'] as List)
           .whereType<Map>()
@@ -2684,6 +2698,7 @@ class _RootState extends State<Root> {
   void initState() {
     super.initState();
     App.tab.addListener(_tabL);
+    App.refresh.addListener(_chkUpd);
     if (!App.started) {
       App.started = true;
       App.load();
@@ -2693,7 +2708,49 @@ class _RootState extends State<Root> {
   @override
   void dispose() {
     App.tab.removeListener(_tabL);
+    App.refresh.removeListener(_chkUpd);
     super.dispose();
+  }
+
+  /// update wajib: kalau build di HP lebih kecil dari versi_min di sheet "Update"
+  /// (kosong/0 = tidak ada update wajib; build lama tanpa nomor tidak terpengaruh)
+  void _chkUpd() {
+    final u = App.upd;
+    if (u == null || App.updShown || !mounted) return;
+    final mn = u['min'] as int;
+    if (kBuild <= 0 || mn <= 0 || kBuild >= mn) return;
+    App.updShown = true;
+    final force = u['force'] == true;
+    final url = u['url'] as String;
+    final msg = (u['msg'] as String).isEmpty
+        ? 'Versi baru LesehanTV sudah tersedia. Perbarui aplikasi untuk melanjutkan.'
+        : u['msg'] as String;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: !force,
+        builder: (c) => PopScope(
+          canPop: !force,
+          child: AlertDialog(
+            backgroundColor: isLight ? Colors.white : const Color(0xFF15151C),
+            title: const Text('Pembaruan tersedia'),
+            content: Text('$msg\n\nVersi kamu: $kBuild  •  Terbaru: $mn'),
+            actions: [
+              if (!force)
+                TextButton(
+                    onPressed: () => Navigator.pop(c),
+                    child: const Text('Nanti')),
+              FilledButton(
+                  onPressed: () {
+                    if (url.isNotEmpty) openUrl(url);
+                  },
+                  child: const Text('Perbarui')),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
   Future<void> _askExit() async {
@@ -3126,7 +3183,7 @@ class _PopularTabState extends State<PopularTab> {
         .where((x) => x.value > 0)
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    final top = l.take(30).toList();
+    final top = l.take(10).toList();
     return ListView(
       padding: EdgeInsets.fromLTRB(14, 14, 14, navPad),
       children: [
