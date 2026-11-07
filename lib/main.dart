@@ -7,6 +7,8 @@ import 'dart:ui' show ImageByteFormat, ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chewie/chewie.dart';
+import 'package:firebase_core/firebase_core.dart' show Firebase, FirebaseOptions;
+import 'package:firebase_messaging/firebase_messaging.dart' show FirebaseMessaging;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
@@ -2641,7 +2643,7 @@ Future<void> main() async {
   satN.value = (Store.p.getDouble('sat') ?? 100).clamp(100.0, 200.0);
   fitN.value = Store.p.getBool('fit') ?? false;
   runApp(const LesehanApp());
-  if (Store.p.getBool('notif') ?? true) syncNotif(true);
+  initPush().then((_) => syncPush(Store.p.getBool('notif') ?? true));
 }
 
 /// notifikasi judul baru (cek berkala di latar belakang oleh kode native)
@@ -2653,6 +2655,77 @@ Future<void> syncNotif(bool on) async {
       'key': String.fromCharCodes(_ak),
     });
   } catch (_) {}
+}
+
+/* ===================== PUSH (FCM) ===================== */
+bool pushOk = false;
+String pushErr = '';
+bool _fgSet = false;
+final pushInfo = ValueNotifier<String>('');
+final msgKey = GlobalKey<ScaffoldMessengerState>();
+
+String _short(Object e) {
+  final t = e.toString().split('\n').first;
+  return t.length > 90 ? t.substring(0, 90) : t;
+}
+
+/// nilai ini identitas publik aplikasi di Firebase (bukan rahasia)
+Future<void> initPush() async {
+  try {
+    await Firebase.initializeApp(
+        options: const FirebaseOptions(
+            apiKey: 'AIzaSyDmKVh7qShflDkrZD9CeR-b3QmJl23JjgI',
+            appId: '1:23342742276:android:20e59c19b22b01afe46e51',
+            messagingSenderId: '23342742276',
+            projectId: 'lesehantv-9476a',
+            storageBucket: 'lesehantv-9476a.firebasestorage.app'));
+    pushOk = true;
+  } catch (e) {
+    pushOk = false;
+    pushErr = _short(e);
+  }
+}
+
+/// push dari server (FCM). Kalau Firebase gagal dimuat, pakai notifikasi lokal yang lama.
+Future<void> syncPush(bool on) async {
+  if (!pushOk) {
+    pushInfo.value = 'Push belum aktif: $pushErr';
+    await syncNotif(on);
+    return;
+  }
+  try {
+    final fm = FirebaseMessaging.instance;
+    if (on) {
+      try {
+        await fm.requestPermission();
+      } catch (_) {}
+      final tk = await fm.getToken();
+      await fm.subscribeToTopic('baru');
+      pushInfo.value =
+          'Push aktif${tk == null ? '' : ' (kode ${tk.substring(tk.length > 6 ? tk.length - 6 : 0)})'}';
+      if (!_fgSet) {
+        _fgSet = true;
+        // saat aplikasi sedang dibuka, Android tidak memunculkan notifikasi sendiri: tampilkan di dalam aplikasi
+        FirebaseMessaging.onMessage.listen((msg) {
+          final n = msg.notification;
+          if (n == null) return;
+          msgKey.currentState
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(
+                content: Text('${n.title ?? ''}\n${n.body ?? ''}'.trim()),
+                duration: const Duration(seconds: 6),
+                behavior: SnackBarBehavior.floating));
+        });
+      }
+    } else {
+      await fm.unsubscribeFromTopic('baru');
+      pushInfo.value = 'Push dimatikan';
+    }
+    await syncNotif(false); // matikan alarm lama supaya tidak dobel
+  } catch (e) {
+    pushInfo.value = 'Push gagal: ${_short(e)}';
+    await syncNotif(on);
+  }
 }
 
 class NotifRow extends StatefulWidget {
@@ -2678,8 +2751,11 @@ class _NotifRowState extends State<NotifRow> {
                 children: [
                   const Text('Notifikasi judul baru',
                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  Text('Dicek berkala di latar belakang',
-                      style: TextStyle(color: mut, fontSize: 11)),
+                  ValueListenableBuilder<String>(
+                      valueListenable: pushInfo,
+                      builder: (_, v, __) => Text(
+                          v.isEmpty ? 'Dikirim otomatis saat ada judul baru' : v,
+                          style: TextStyle(color: mut, fontSize: 11))),
                 ]),
           ),
           Switch(
@@ -2687,7 +2763,7 @@ class _NotifRowState extends State<NotifRow> {
             onChanged: (v) {
               setState(() => on = v);
               Store.p.setBool('notif', v);
-              syncNotif(v);
+              syncPush(v);
             },
           ),
         ]),
@@ -2906,6 +2982,7 @@ class LesehanApp extends StatelessWidget {
         builder: (_, __) => MaterialApp(
           key: ValueKey(themeId.value),
           title: 'LesehanTV',
+          scaffoldMessengerKey: msgKey,
           debugShowCheckedModeBanner: false,
           theme: buildTheme(),
           builder: (c, child) => Listener(
