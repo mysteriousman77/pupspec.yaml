@@ -505,6 +505,7 @@ class App {
       loaded = true;
       Store.p.setString('cache', body);
       ping();
+      Prem.recheck();
     } catch (_) {
       if (!loaded) error = 'Gagal mengambil data. Periksa koneksi lalu coba lagi.';
     }
@@ -2664,6 +2665,210 @@ class _NotifRowState extends State<NotifRow> {
       );
 }
 
+/* ===================== PREMIUM + DIRECT LINK ===================== */
+const directLink = 'https://uplcm.com/4/12112706';
+const premBuy = 'https://saweria.co/AKUINGINTERKENAL';
+const premChat = 'https://t.me/+U0ocipINk6MzYmE1';
+
+class Prem {
+  static bool fs = false; // pemutar sedang layar penuh
+  static bool skip = false; // ketukan pada kartu premium tidak dihitung
+  static bool _sk = false;
+  static int _n = 0, _ts = 0;
+  static Offset? _p;
+
+  static String get _today {
+    final t = DateTime.now().toUtc().add(const Duration(hours: 7));
+    return '${t.year.toString().padLeft(4, '0')}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}';
+  }
+
+  static String get until => Store.p.getString('prem_u') ?? '';
+  static bool get on => until.isNotEmpty && until.compareTo(_today) >= 0;
+
+  static String get dev {
+    var d = Store.p.getString('prem_dev');
+    if (d == null || d.isEmpty) {
+      final r = Random();
+      d = List.generate(16, (_) => r.nextInt(36).toRadixString(36)).join();
+      Store.p.setString('prem_dev', d);
+    }
+    return d;
+  }
+
+  static const _err = {
+    'invalid': 'Kode tidak ditemukan',
+    'expired': 'Kode sudah kedaluwarsa',
+    'device': 'Kode sudah dipakai di batas jumlah perangkat',
+    'coba': 'Terlalu banyak percobaan, coba lagi nanti',
+    'sibuk': 'Server sibuk, coba lagi sebentar',
+  };
+
+  /// kembalikan null kalau berhasil, atau pesan kesalahan
+  static Future<String?> activate(String code) async {
+    code = code.trim();
+    if (code.length < 4) return 'Masukkan kode premium';
+    try {
+      final r = await http
+          .get(Uri.parse(apiQ(
+              'lic=${Uri.encodeQueryComponent(code)}&dev=${Uri.encodeQueryComponent(dev)}')))
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(utf8.decode(r.bodyBytes));
+      if (d is Map && d['ok'] == 1 && d['u'] != null) {
+        Store.p.setString('prem_c', code);
+        Store.p.setString('prem_u', d['u'].toString());
+        Store.p.setInt('prem_v', DateTime.now().millisecondsSinceEpoch);
+        App.refresh.value++;
+        return null;
+      }
+      return _err[d is Map ? '${d['err']}' : ''] ?? 'Kode tidak valid';
+    } catch (_) {
+      return 'Tidak bisa terhubung ke server';
+    }
+  }
+
+  static void off() {
+    Store.p.remove('prem_c');
+    Store.p.remove('prem_u');
+    Store.p.remove('prem_v');
+    App.refresh.value++;
+  }
+
+  /// periksa ulang ke server tiap 6 jam; kalau kode dicabut, premium dimatikan
+  static Future<void> recheck() async {
+    try {
+      final c = Store.p.getString('prem_c');
+      if (c == null || c.isEmpty) return;
+      final v = Store.p.getInt('prem_v') ?? 0;
+      if (DateTime.now().millisecondsSinceEpoch - v < 6 * 3600 * 1000) return;
+      final r = await http
+          .get(Uri.parse(apiQ(
+              'lic=${Uri.encodeQueryComponent(c)}&dev=${Uri.encodeQueryComponent(dev)}')))
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(utf8.decode(r.bodyBytes));
+      if (d is Map && d['ok'] == 1 && d['u'] != null) {
+        Store.p.setString('prem_u', d['u'].toString());
+        Store.p.setInt('prem_v', DateTime.now().millisecondsSinceEpoch);
+        App.refresh.value++;
+      } else if (d is Map &&
+          (d['err'] == 'invalid' ||
+              d['err'] == 'expired' ||
+              d['err'] == 'device')) {
+        off();
+      }
+    } catch (_) {}
+  }
+
+  /// hitung ketukan (bukan geseran): tiap 3 ketukan -> direct link (akun gratis)
+  static void down(PointerDownEvent e) {
+    _p = e.position;
+    _ts = e.timeStamp.inMilliseconds;
+    _sk = skip;
+    skip = false;
+  }
+
+  static void up(PointerUpEvent e) {
+    final p = _p;
+    _p = null;
+    if (p == null || _sk) return;
+    if ((e.position - p).distance > 24) return;
+    if (e.timeStamp.inMilliseconds - _ts > 500) return;
+    if (on || fs) return;
+    if (++_n >= 3) {
+      _n = 0;
+      openUrl(directLink);
+    }
+  }
+}
+
+class PremiumCard extends StatefulWidget {
+  const PremiumCard({super.key});
+  @override
+  State<PremiumCard> createState() => _PremiumCardS();
+}
+
+class _PremiumCardS extends State<PremiumCard> {
+  final ctl = TextEditingController();
+  bool busy = false;
+
+  @override
+  void dispose() {
+    ctl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _go() async {
+    setState(() => busy = true);
+    final err = await Prem.activate(ctl.text);
+    if (!mounted) return;
+    setState(() => busy = false);
+    if (err == null) {
+      ctl.clear();
+      toast(context, '✅ Premium aktif, bebas gangguan');
+    } else {
+      toast(context, err);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = Prem.on;
+    return Listener(
+      onPointerDown: (_) => Prem.skip = true,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(14),
+        decoration: cardBox(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(on ? '⭐ Premium Aktif' : '⭐ Premium · Bebas Gangguan',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          if (on) ...[
+            Text('Tanpa direct link sampai ${Prem.until}.',
+                style: TextStyle(color: mut, fontSize: 12)),
+            const SizedBox(height: 8),
+            TextButton(
+                onPressed: () {
+                  Prem.off();
+                  setState(() {});
+                },
+                child: const Text('Keluar dari Premium')),
+          ] else ...[
+            Text(
+                'Akun gratis: tiap 3 ketukan membuka tab iklan. Masukkan kode premium untuk menghilangkannya.',
+                style: TextStyle(color: mut, fontSize: 12)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ctl,
+              enabled: !busy,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  hintText: 'LTV-XXXXX-XXXXX'),
+            ),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                child: FilledButton(
+                    onPressed: busy ? null : _go,
+                    child: Text(busy ? 'Memeriksa...' : 'Aktifkan')),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                  onPressed: () => openUrl(premBuy),
+                  child: const Text('Beli Kode')),
+            ]),
+            TextButton(
+                onPressed: () => openUrl(premChat),
+                child: const Text('Tanya / konfirmasi pembayaran')),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
 class LesehanApp extends StatelessWidget {
   const LesehanApp({super.key});
   @override
@@ -2674,6 +2879,11 @@ class LesehanApp extends StatelessWidget {
           title: 'LesehanTV',
           debugShowCheckedModeBanner: false,
           theme: buildTheme(),
+          builder: (c, child) => Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: Prem.down,
+              onPointerUp: Prem.up,
+              child: child ?? const SizedBox.shrink()),
           home: const Root(),
         ),
       );
@@ -2795,7 +3005,9 @@ class _RootState extends State<Root> {
         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: ColoredBox(
           color: Colors.black.withOpacity(.4),
-          child: GestureDetector(
+          child: Listener(
+              onPointerDown: (_) => Prem.skip = true,
+              child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
           if (ok) openUrl(lk);
@@ -2835,6 +3047,7 @@ class _RootState extends State<Root> {
           ),
         ),
       ),
+        ),
         ),
       ),
     );
@@ -3807,6 +4020,7 @@ class ProfileTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          const PremiumCard(),
           _recap(),
           Tap(
             onTap: () => _shareRecap(context),
@@ -4418,6 +4632,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _enterFs() {
     if (_fs || !mounted) return;
+    Prem.fs = true;
     setState(() => _fs = true);
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
@@ -4426,6 +4641,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _exitFs() {
     if (!_fs) return;
+    Prem.fs = false;
     if (mounted) setState(() => _fs = false);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -4641,6 +4857,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _tok++;
     _release();
+    Prem.fs = false;
     if (_fs) SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     Gest.resetBri();
