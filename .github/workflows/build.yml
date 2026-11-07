@@ -375,7 +375,7 @@ jobs:
 
       - run: flutter pub get
 
-      - run: flutter build apk --release --obfuscate --split-debug-info=build/symbols --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
+      - run: flutter build apk --release --obfuscate --split-debug-info=build/symbols --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }} --dart-define=BUILD=${{ github.run_number }}
 
       # tanda tangan dengan kunci tetap (secret KEYSTORE_B64) supaya APK baru bisa
       # menimpa/update APK lama tanpa uninstall
