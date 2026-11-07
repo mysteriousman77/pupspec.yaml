@@ -35,6 +35,17 @@ jobs:
           sed -i 's|android:label="[^"]*"|android:label="LesehanTV"|' $M
           sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <application#' $M
           sed -i 's#</application>#<receiver android:name=".NotifReceiver" android:exported="false"/>\n        <receiver android:name=".BootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>\n    </application>#' $M
+          # ikon kecil notifikasi (putih transparan, supaya tidak jadi kotak putih)
+          RES=android/app/src/main/res
+          mkdir -p $RES/drawable $RES/values
+          cat > $RES/drawable/ic_stat_notif.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+            <path android:fillColor="#FFFFFFFF" android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM10,16.5v-9l6,4.5 -6,4.5z"/>
+          </vector>
+          XML
+          echo '<resources><color name="notif_accent">#FFFAAE2B</color></resources>' > $RES/values/notif_color.xml
+          sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_notif"/>\n        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notif_accent"/>\n    </application>#' $M
 
       # kode native: volume & kecerahan asli perangkat
       - name: Write native MainActivity
@@ -257,7 +268,7 @@ jobs:
                   val pend = PendingIntent.getActivity(c, 2, open,
                       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                   val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(c, CH) else Notification.Builder(c)
-                  b.setSmallIcon(c.applicationInfo.icon)
+                  b.setSmallIcon(c.resources.getIdentifier("ic_stat_notif", "drawable", c.packageName))
                       .setContentTitle("Baru di LesehanTV")
                       .setContentText(text)
                       .setStyle(Notification.BigTextStyle().bigText(text))
