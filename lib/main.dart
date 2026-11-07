@@ -344,6 +344,14 @@ const tg = {
   53: 'Thriller',
   10752: 'Perang',
   37: 'Western',
+  10759: 'Aksi & Petualangan',
+  10762: 'Anak-anak',
+  10763: 'Berita',
+  10764: 'Reality',
+  10765: 'Fiksi Ilmiah & Fantasi',
+  10766: 'Sinetron',
+  10767: 'Talk Show',
+  10768: 'Perang & Politik',
 };
 
 class Recs {
@@ -798,7 +806,7 @@ class App {
   }
 
   static Future<void> metaFetch(Group g) async {
-    if (kind(g.cat) != 'movie' || metaBusy.contains(g.title)) return;
+    if (metaBusy.contains(g.title)) return;
     final c = metaOf(g.title);
     final ts = (c['ts'] as num?)?.toInt() ?? 0;
     final ttl = (s(c['s']).isNotEmpty ? 30 : 1) * 86400000;
@@ -806,31 +814,52 @@ class App {
     metaBusy.add(g.title);
     try {
       final b = g.base;
-      final r = await http
-          .get(Uri.parse(
-              'https://api.themoviedb.org/3/search/movie?api_key=$tmdbKey&language=id-ID&query=${Uri.encodeComponent(b)}'))
-          .timeout(const Duration(seconds: 15));
-      if (r.statusCode != 200) throw 'x';
-      final d = jsonDecode(utf8.decode(r.bodyBytes));
+      // film: cari di film. Anime/donghua/drama: cari di serial (TV), lalu film sebagai cadangan
+      final types = kind(g.cat) == 'movie' ? ['movie'] : ['tv', 'movie'];
       Map? best;
+      var typ = 'movie';
       var bs = 0.0;
-      final results =
-          (d is Map && d['results'] is List) ? d['results'] as List : <dynamic>[];
-      for (final x in results) {
-        if (x is! Map) continue;
-        final names = [s(x['title']), s(x['original_title'])]
-            .where((n) => n.isNotEmpty)
-            .map(baseTitle);
-        var sc = 0.0;
-        for (final n in names) {
-          final v = cmpT(n) == cmpT(b) ? 1.0 : (relB(b, n) ? .9 : simT(b, n));
-          if (v > sc) sc = v;
+      var netErr = false;
+      for (final tp in types) {
+        final r = await http
+            .get(Uri.parse(
+                'https://api.themoviedb.org/3/search/$tp?api_key=$tmdbKey&language=id-ID&query=${Uri.encodeComponent(b)}'))
+            .timeout(const Duration(seconds: 15));
+        if (r.statusCode != 200) {
+          netErr = true;
+          break;
         }
-        if (sc > bs) {
-          bs = sc;
-          best = x;
+        final d = jsonDecode(utf8.decode(r.bodyBytes));
+        final results = (d is Map && d['results'] is List)
+            ? d['results'] as List
+            : <dynamic>[];
+        Map? bb;
+        var sb = 0.0;
+        for (final x in results) {
+          if (x is! Map) continue;
+          final names = (tp == 'tv'
+                  ? [s(x['name']), s(x['original_name'])]
+                  : [s(x['title']), s(x['original_title'])])
+              .where((n) => n.isNotEmpty)
+              .map(baseTitle);
+          var sc = 0.0;
+          for (final n in names) {
+            final v = cmpT(n) == cmpT(b) ? 1.0 : (relB(b, n) ? .9 : simT(b, n));
+            if (v > sc) sc = v;
+          }
+          if (sc > sb) {
+            sb = sc;
+            bb = x;
+          }
+        }
+        if (bb != null && sb >= .82) {
+          best = bb;
+          bs = sb;
+          typ = tp;
+          break;
         }
       }
+      if (netErr) throw 'x';
       final o = <String, dynamic>{
         'ts': DateTime.now().millisecondsSinceEpoch,
         's': '',
@@ -852,7 +881,7 @@ class App {
           try {
             final r2 = await http
                 .get(Uri.parse(
-                    'https://api.themoviedb.org/3/movie/${best['id']}?api_key=$tmdbKey&language=en-US'))
+                    'https://api.themoviedb.org/3/$typ/${best['id']}?api_key=$tmdbKey&language=en-US'))
                 .timeout(const Duration(seconds: 15));
             final m = jsonDecode(utf8.decode(r2.bodyBytes));
             final en = cut(s(m is Map ? m['overview'] : ''), 1200);
