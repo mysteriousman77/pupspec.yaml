@@ -499,7 +499,7 @@ class App {
       ingest(d);
       loaded = true;
       Store.p.setString('cache', body);
-      Store.ping();
+      ping();
     } catch (_) {
       if (!loaded) error = 'Gagal mengambil data. Periksa koneksi lalu coba lagi.';
     }
@@ -3050,10 +3050,6 @@ class _HomeTabState extends State<HomeTab> {
               auto: false,
               more: () => App.tab.value = 3),
         top10(),
-        section('Baru Ditambahkan',
-            latest.take(12).map((g) => GroupCard(g, width: 190)).toList(),
-            auto: false,
-            more: () => goCat('all')),
         for (final k in kinds)
           Builder(builder: (_) {
             final l = latest.where((g) => kind(g.cat) == k[0]).take(12).toList();
@@ -3473,6 +3469,23 @@ class ProfileTab extends StatelessWidget {
 
     final tt = _top('t');
     final tg2 = _top('g');
+    // kategori favorit: gabungkan waktu nonton per jenis (anime/donghua/film/drama)
+    const katNama = {
+      'anime': 'Anime',
+      'donghua': 'Donghua',
+      'movie': 'Film',
+      'drama': 'Drama'
+    };
+    final katSum = <String, int>{};
+    Store.wk('c').forEach((c, v) {
+      final k = kind(c);
+      katSum[k] = (katSum[k] ?? 0) + v;
+    });
+    final kats = (katSum.entries.where((e) => e.value > 0).toList()
+          ..sort((x, y) => y.value.compareTo(x.value)))
+        .take(3)
+        .map((e) => MapEntry(katNama[e.key] ?? e.key, e.value))
+        .toList();
     final big = total >= 3600 ? '${total ~/ 3600}' : '${(total / 60).round()}';
     final unit = total >= 3600
         ? 'jam ${(total % 3600) ~/ 60} mnt'
@@ -3598,6 +3611,24 @@ class ProfileTab extends StatelessWidget {
                 ),
               ]),
             ),
+        ],
+        if (kats.isNotEmpty) ...[
+          _head('Kategori favorit'),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (var i = 0; i < kats.length; i++)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                    color: accent.withOpacity(i == 0 ? .3 : .12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: accent.withOpacity(.6))),
+                child: Text('${kats[i].key} · ${fmtDur(kats[i].value)}',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: i == 0 ? FontWeight.w700 : FontWeight.w500)),
+              ),
+          ]),
         ],
         if (tg2.isNotEmpty) ...[
           _head('Genre teratas'),
