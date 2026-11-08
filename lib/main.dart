@@ -2860,11 +2860,19 @@ Future<void> syncPush(bool on) async {
         FirebaseMessaging.onMessage.listen((msg) {
           final n = msg.notification;
           if (n == null) return;
+          // banner muncul di ATAS layar (seperti notifikasi sistem)
+          final vw = WidgetsBinding.instance.platformDispatcher.views.first;
+          final h = vw.physicalSize.height / vw.devicePixelRatio;
+          final top = vw.padding.top / vw.devicePixelRatio;
           msgKey.currentState
             ?..hideCurrentSnackBar()
             ..showSnackBar(SnackBar(
-                content: Text('${n.title ?? ''}\n${n.body ?? ''}'.trim()),
+                content: Text('${n.title ?? ''}\n${n.body ?? ''}'.trim(),
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
                 duration: const Duration(seconds: 6),
+                dismissDirection: DismissDirection.up,
+                margin: EdgeInsets.fromLTRB(
+                    12, 0, 12, max(0.0, h - top - 100)),
                 behavior: SnackBarBehavior.floating));
         });
       }
