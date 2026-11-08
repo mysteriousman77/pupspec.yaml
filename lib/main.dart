@@ -2384,6 +2384,11 @@ class _MilestoneS extends State<MilestoneCard> {
       _c = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..setBackgroundColor(Colors.transparent)
+        ..setNavigationDelegate(NavigationDelegate(onPageFinished: (_) {
+          // perkecil isi widget supaya kartu tipis
+          _c?.runJavaScript(
+              "document.documentElement.style.zoom='0.55';document.body.style.overflow='hidden';");
+        }))
         ..loadRequest(Uri.parse(
             'https://saweria.co/widgets/milestone?streamKey=51ebc30d86d79275d4538d4636664f1c'));
     } catch (_) {}
@@ -2398,7 +2403,7 @@ class _MilestoneS extends State<MilestoneCard> {
       child: Tap(
         onTap: () => openUrl('https://saweria.co/AKUINGINTERKENAL'),
         child: Container(
-          height: 150,
+          height: 84,
           decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: lineC),
