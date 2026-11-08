@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 const api =
@@ -87,8 +88,13 @@ Color get mut => isLight ? const Color(0xFF5B5E6B) : Colors.white60;
 Color get lineC => isLight ? Colors.black12 : Colors.white12;
 Color get onAc => accent.computeLuminance() > .45 ? Colors.black : Colors.white;
 
-/// efek kaca & animasi penuh selalu aktif
-bool get ultra => true;
+/// Ultra = efek kaca & animasi penuh. Lite = animasi & kaca dikurangi (navigasi bawah tetap kaca)
+final fxUltra = ValueNotifier<bool>(true);
+bool get ultra => fxUltra.value;
+void setFx(bool v) {
+  Store.p.setBool('ultra', v);
+  fxUltra.value = v;
+}
 
 void setTheme(String id) {
   curTh = themes.firstWhere((t) => t.id == id, orElse: () => themes[0]);
@@ -177,6 +183,21 @@ Future<void> openUrl(String u) async {
 /// kunci unik per episode (judul+eps+id/src), dijamin tidak bentrok
 /// urutan terbaru: tiap sheet kategori punya "baris terakhir" sendiri,
 /// jadi yang terbaru dari setiap sheet tampil berdampingan
+/// header Referer untuk berkas .mp4 (banyak host menolak permintaan tanpa referer): pakai domain induk host
+Map<String, String> videoHeaders(String url) {
+  final u = Uri.tryParse(url);
+  if (u == null || !u.path.toLowerCase().endsWith('.mp4')) return const {};
+  final p = u.host.split('.');
+  final h = p.length > 2 ? p.sublist(p.length - 2).join('.') : u.host;
+  return {'Referer': 'https://$h/', 'Origin': 'https://$h'};
+}
+
+/// link video langsung (HLS .m3u8 atau berkas .mp4) -> diputar pemutar bawaan
+bool isDirectUrl(String u) {
+  final p = u.toLowerCase().split('?').first.split('#').first;
+  return p.endsWith('.m3u8') || p.endsWith('.mp4') || u.toLowerCase().contains('.m3u8');
+}
+
 int newer(Group a, Group b) {
   final c = a.rk.compareTo(b.rk);
   return c != 0 ? c : b.lastId.compareTo(a.lastId);
@@ -410,7 +431,8 @@ class App {
             u,
             t == 'hls' ||
                 t == 'm3u8' ||
-                (t != 'embed' && t != 'iframe' && u.contains('.m3u8'))));
+                t == 'mp4' ||
+                (t != 'embed' && t != 'iframe' && isDirectUrl(u))));
       }
       final tp = [s(it['tipe']), s(it['type']), s(it['format'])]
           .firstWhere((x) => x.isNotEmpty, orElse: () => '')
@@ -431,7 +453,7 @@ class App {
         gen: cut(
             s(it['genre']).isNotEmpty ? s(it['genre']) : s(it['genres']), 200),
         svn: s(it['nama1']),
-        tipeHls: tp == 'hls' || tp == 'm3u8',
+        tipeHls: tp == 'hls' || tp == 'm3u8' || tp == 'mp4',
         extra: extra,
         rk: int.tryParse(s(it['_r'])) ?? 0,
       ));
@@ -1341,7 +1363,7 @@ class GlowBg extends StatelessWidget {
 }
 
 /* ===================== EFEK: LITE / ULTRA ===================== */
-double get navPad => ultra ? 112.0 : 20.0;
+double get navPad => 112.0;
 
 Widget blurW({required Widget child, double s = 18, BorderRadius? r}) {
   if (!ultra) return child;
@@ -1680,6 +1702,85 @@ class Gest {
 }
 
 /// geser vertikal: kiri = kecerahan, kanan = volume
+/// gembok layar: saat terkunci semua sentuhan diblokir; ketuk layar lalu ketuk ikon gembok untuk membuka
+class LockLayer extends StatefulWidget {
+  final Widget child;
+  const LockLayer({required this.child, super.key});
+  @override
+  State<LockLayer> createState() => _LockS();
+}
+
+class _LockS extends State<LockLayer> {
+  bool lock = false, show = false;
+  Timer? _h;
+
+  @override
+  void dispose() {
+    _h?.cancel();
+    super.dispose();
+  }
+
+  void _peek() {
+    setState(() => show = true);
+    _h?.cancel();
+    _h = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => show = false);
+    });
+  }
+
+  Widget _btn(IconData i, VoidCallback f) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: f,
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: const BoxDecoration(
+              shape: BoxShape.circle, color: Colors.black54),
+          child: Icon(i, color: Colors.white, size: 24),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        IgnorePointer(ignoring: lock, child: widget.child),
+        if (lock)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _peek,
+              onDoubleTap: _peek,
+              onVerticalDragStart: (_) {},
+              onHorizontalDragStart: (_) {},
+              child: const SizedBox.expand(),
+            ),
+          ),
+        if (!lock)
+          Positioned(
+              left: 14,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                  child: Opacity(
+                      opacity: .6,
+                      child: _btn(Icons.lock_open_rounded, () {
+                        setState(() => lock = true);
+                        _peek();
+                      })))),
+        if (lock && show)
+          Positioned(
+              left: 14,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                  child: _btn(Icons.lock_rounded, () {
+                setState(() {
+                  lock = false;
+                  show = false;
+                });
+              }))),
+      ]);
+}
+
 class GestLayer extends StatefulWidget {
   final Widget child;
   final bool fitBtn;
@@ -2267,6 +2368,51 @@ Widget pickerCard(BuildContext c) => Padding(
       ),
     );
 
+/// target dukungan (widget milestone Saweria), tampil di bawah kartu "Bingung mau nonton apa?"
+class MilestoneCard extends StatefulWidget {
+  const MilestoneCard({super.key});
+  @override
+  State<MilestoneCard> createState() => _MilestoneS();
+}
+
+class _MilestoneS extends State<MilestoneCard> {
+  WebViewController? _c;
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _c = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(Colors.transparent)
+        ..loadRequest(Uri.parse(
+            'https://saweria.co/widgets/milestone?streamKey=51ebc30d86d79275d4538d4636664f1c'));
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _c;
+    if (c == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Tap(
+        onTap: () => openUrl('https://saweria.co/AKUINGINTERKENAL'),
+        child: Container(
+          height: 150,
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: lineC),
+              color: Colors.black.withOpacity(isLight ? .04 : .25)),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: IgnorePointer(child: WebViewWidget(controller: c)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PickerSheet extends StatefulWidget {
   const PickerSheet({super.key});
   @override
@@ -2639,6 +2785,7 @@ Future<void> main() async {
   final sv = Store.p.getString('theme');
   curTh = themes.firstWhere((t) => t.id == sv, orElse: () => themes[0]);
   themeId.value = curTh.id;
+  fxUltra.value = Store.p.getBool('ultra') ?? true;
   satN.value = (Store.p.getDouble('sat') ?? 100).clamp(100.0, 200.0);
   fitN.value = Store.p.getBool('fit') ?? false;
   runApp(const LesehanApp());
@@ -2774,9 +2921,9 @@ class LesehanApp extends StatelessWidget {
   const LesehanApp({super.key});
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: themeId,
+        listenable: Listenable.merge([themeId, fxUltra]),
         builder: (_, __) => MaterialApp(
-          key: ValueKey(themeId.value),
+          key: ValueKey('${themeId.value}${fxUltra.value}'),
           title: 'LesehanTV',
           scaffoldMessengerKey: msgKey,
           debugShowCheckedModeBanner: false,
@@ -3211,6 +3358,7 @@ class _HomeTabState extends State<HomeTab> {
             ]),
           ),
         pickerCard(context),
+        const MilestoneCard(),
         if (hs.isNotEmpty)
           section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList(),
               auto: false,
@@ -3374,12 +3522,20 @@ class CatalogTab extends StatefulWidget {
 
 class _CatalogTabState extends State<CatalogTab> {
   String q = '', cat = 'all';
+  int pg = 0;
+  static const per = 12;
+  final _sc = ScrollController();
 
   void _req() {
     final v = App.catReq.value;
     if (v.isEmpty) return;
     App.catReq.value = '';
-    if (mounted) setState(() => cat = v);
+    if (mounted) {
+      setState(() {
+        cat = v;
+        pg = 0;
+      });
+    }
   }
 
   @override
@@ -3391,7 +3547,49 @@ class _CatalogTabState extends State<CatalogTab> {
   @override
   void dispose() {
     App.catReq.removeListener(_req);
+    _sc.dispose();
     super.dispose();
+  }
+
+  void _go(int i) {
+    setState(() => pg = i);
+    if (_sc.hasClients) _sc.jumpTo(0);
+  }
+
+  Widget _pager(int n) {
+    final s = <int>{0, n - 1, for (var i = pg - 2; i <= pg + 2; i++) if (i >= 0 && i < n) i}.toList()..sort();
+    final w = <Widget>[];
+    for (var k = 0; k < s.length; k++) {
+      if (k > 0 && s[k] - s[k - 1] > 1) {
+        w.add(Text('…', style: TextStyle(color: mut)));
+      }
+      final i = s[k];
+      w.add(Tap(
+        onTap: () => _go(i),
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: i == pg ? accent : fg.withOpacity(.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: i == pg ? accent : lineC)),
+          child: Text('${i + 1}',
+              style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: i == pg ? onAc : fg)),
+        ),
+      ));
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 18, 0, 6),
+      child: Wrap(
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: w),
+    );
   }
 
   @override
@@ -3428,7 +3626,10 @@ class _CatalogTabState extends State<CatalogTab> {
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
       child: Column(children: [
         TextField(
-          onChanged: (v) => setState(() => q = v.toLowerCase().trim()),
+          onChanged: (v) => setState(() {
+            q = v.toLowerCase().trim();
+            pg = 0;
+          }),
           decoration: InputDecoration(
             hintText: 'Cari judul...',
             prefixIcon: const Icon(Icons.search),
@@ -3449,7 +3650,10 @@ class _CatalogTabState extends State<CatalogTab> {
                 .map((c) => Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: chipB(c[1], cat == c[0],
-                          () => setState(() => cat = c[0])),
+                          () => setState(() {
+                                cat = c[0];
+                                pg = 0;
+                              })),
                     ))
                 .toList(),
           ),
@@ -3463,14 +3667,24 @@ class _CatalogTabState extends State<CatalogTab> {
               key: ValueKey(cat),
               child: l.isEmpty
                   ? const Center(child: Text('Tidak ada konten yang cocok.'))
-                  : LayoutBuilder(
-                      builder: (_, c) => GridView.builder(
-                        padding: EdgeInsets.only(bottom: navPad),
-                        itemCount: l.length,
-                        gridDelegate: gridD(c.maxWidth),
-                        itemBuilder: (_, i) => GroupCard(l[i]),
-                      ),
-                    ),
+                  : LayoutBuilder(builder: (_, c) {
+                      final n = (l.length + per - 1) ~/ per;
+                      final cp = pg.clamp(0, n - 1).toInt();
+                      final part = l.skip(cp * per).take(per).toList();
+                      return CustomScrollView(
+                        controller: _sc,
+                        slivers: [
+                          SliverGrid(
+                            gridDelegate: gridD(c.maxWidth),
+                            delegate: SliverChildBuilderDelegate(
+                                (_, i) => GroupCard(part[i]),
+                                childCount: part.length),
+                          ),
+                          if (n > 1) SliverToBoxAdapter(child: _pager(n)),
+                          SliverToBoxAdapter(child: SizedBox(height: navPad)),
+                        ],
+                      );
+                    }),
             ),
           ),
         ),
@@ -3833,6 +4047,28 @@ class ProfileTab extends StatelessWidget {
     );
   }
 
+  Widget _fxCard() => Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(14),
+        decoration: cardBox(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Mode Tampilan',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(
+              ultra
+                  ? 'Ultra: efek kaca & animasi penuh.'
+                  : 'Lite: animasi & efek kaca dikurangi (navigasi bawah tetap kaca), lebih ringan di HP biasa.',
+              style: TextStyle(color: mut, fontSize: 12)),
+          const SizedBox(height: 12),
+          Row(children: [
+            chipB('✨ Ultra', ultra, () => setFx(true)),
+            const SizedBox(width: 8),
+            chipB('🍃 Lite', !ultra, () => setFx(false)),
+          ]),
+        ]),
+      );
+
   Widget _theme() => Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
         padding: const EdgeInsets.all(14),
@@ -3949,6 +4185,7 @@ class ProfileTab extends StatelessWidget {
               ]),
             ),
           ),
+          _fxCard(),
           _theme(),
           const SizedBox(height: 8),
           Tap(
@@ -4559,6 +4796,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     super.initState();
     ep = widget.ep;
     stack.add(this);
+    try {
+      WakelockPlus.enable();
+    } catch (_) {}
     satN.addListener(_applyWeb);
     fitN.addListener(_applyWeb);
     WidgetsBinding.instance.addObserver(this);
@@ -4608,10 +4848,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         throw 'link tidak valid';
       }
       final hls = sv == 0
-          ? (ep.tipeHls || url.contains('.m3u8'))
+          ? (ep.tipeHls || isDirectUrl(url))
           : ep.extra[sv - 1].hls;
       if (hls) {
-        final c = VideoPlayerController.networkUrl(Uri.parse(url));
+        final c = VideoPlayerController.networkUrl(Uri.parse(url),
+            httpHeaders: videoHeaders(url));
         await c.initialize();
         if (tk != _tok || !mounted) {
           c.dispose();
@@ -4631,13 +4872,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               builder: (_, __) => Scaffold(
                   resizeToAvoidBottomInset: false,
                   backgroundColor: Colors.black,
-                  body: GestLayer(
-                      fitBtn: true,
-                      child: satWrap(fitWrap(
-                          prov,
-                          c.value.aspectRatio == 0
-                              ? 16 / 9
-                              : c.value.aspectRatio))))),
+                  body: LockLayer(
+                      child: GestLayer(
+                          fitBtn: true,
+                          child: satWrap(fitWrap(
+                              prov,
+                              c.value.aspectRatio == 0
+                                  ? 16 / 9
+                                  : c.value.aspectRatio)))))),
           deviceOrientationsOnEnterFullScreen: [
             DeviceOrientation.landscapeLeft,
             DeviceOrientation.landscapeRight
@@ -4724,6 +4966,50 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  /* pewaktu tidur */
+  String _sl = '0';
+  DateTime? _slEnd;
+  Timer? _slT, _slTick;
+
+  String _slLabel() {
+    if (_sl == '0') return 'Mati';
+    if (_sl == 'ep') return 'Akhir episode';
+    final r = _slEnd == null
+        ? 0
+        : max(0, _slEnd!.difference(DateTime.now()).inSeconds);
+    return '${r ~/ 60}:${(r % 60).toString().padLeft(2, '0')}';
+  }
+
+  void _setSleep(String v) {
+    _slT?.cancel();
+    _slTick?.cancel();
+    _slEnd = null;
+    setState(() => _sl = v);
+    final m = int.tryParse(v);
+    if (m != null && m > 0) {
+      _slEnd = DateTime.now().add(Duration(minutes: m));
+      _slT = Timer(Duration(minutes: m), _sleepNow);
+      _slTick = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+    if (v != '0') toast(context, '😴 Pewaktu tidur: ${_slLabel()}');
+  }
+
+  void _sleepNow() {
+    _slTick?.cancel();
+    _slEnd = null;
+    vc?.pause();
+    if (wc != null) {
+      wc!.loadHtmlString('<html><body style="background:#000"></body></html>');
+    }
+    if (_fs) _exitFs();
+    if (mounted) {
+      setState(() => _sl = '0');
+      toast(context, '😴 Pewaktu tidur: video dihentikan');
+    }
+  }
+
   void _onTick() {
     final v = vc?.value;
     if (v == null || !v.isInitialized) return;
@@ -4738,6 +5024,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         v.position >= v.duration - const Duration(milliseconds: 500)) {
       _ended = true;
       Store.markSeen(ep.key);
+      if (_sl == 'ep') {
+        _sl = '0';
+        if (mounted) {
+          setState(() {});
+          toast(context, '😴 Pewaktu tidur: episode selesai');
+        }
+        return;
+      }
       _next();
     }
   }
@@ -4758,7 +5052,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _wt?.cancel();
+    _slT?.cancel();
+    _slTick?.cancel();
     stack.remove(this);
+    if (stack.isEmpty) {
+      try {
+        WakelockPlus.disable();
+      } catch (_) {}
+    }
     satN.removeListener(_applyWeb);
     fitN.removeListener(_applyWeb);
     WidgetsBinding.instance.removeObserver(this);
@@ -4920,6 +5221,37 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   ),
                 ),
               ]),
+              const SizedBox(height: 16),
+              Row(children: [
+                const Expanded(child: Text('😴 Pewaktu Tidur')),
+                Text(_slLabel(),
+                    style: TextStyle(color: accent, fontWeight: FontWeight.w700)),
+              ]),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 42,
+                child: ListView(scrollDirection: Axis.horizontal, children: [
+                  for (final o in [
+                    ['0', 'Mati'],
+                    ['15', '15 mnt'],
+                    ['30', '30 mnt'],
+                    ['45', '45 mnt'],
+                    ['60', '60 mnt'],
+                    if (cc != null) ['ep', 'Akhir episode'],
+                  ])
+                    Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: chipB(
+                            o[1],
+                            (_sl == o[0]) ||
+                                (o[0] != '0' &&
+                                    o[0] != 'ep' &&
+                                    _sl != '0' &&
+                                    _sl != 'ep' &&
+                                    _sl == o[0]),
+                            () => _setSleep(o[0]))),
+                ]),
+              ),
               if (names.length > 1) ...[
                 const SizedBox(height: 16),
                 const Text('🖥 Pilih Server'),
@@ -4981,7 +5313,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         Positioned.fill(
           child: Material(
             color: Colors.black,
-            child: GestLayer(child: _cw!),
+            child: LockLayer(child: GestLayer(child: _cw!)),
           ),
         ),
       ]),
@@ -4995,7 +5327,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) _exitFs();
         },
-        child: Scaffold(backgroundColor: Colors.black, body: _web()),
+        child: Scaffold(
+            backgroundColor: Colors.black,
+            body: LockLayer(child: _web())),
       );
     }
     final g = App.gm[ep.title];
