@@ -3396,12 +3396,27 @@ class _CatalogTabState extends State<CatalogTab> {
 
   @override
   Widget build(BuildContext context) {
-    final l = App.groups
+    var l = App.groups
         .where((g) =>
             (cat == 'all' || kind(g.cat) == cat) &&
             (q.isEmpty || g.title.toLowerCase().contains(q)))
         .toList()
       ..sort(newer);
+    if (cat == 'all') {
+      // selang-seling antar kategori supaya tidak didominasi satu jenis
+      final by = <String, List<Group>>{};
+      for (final g in l) {
+        by.putIfAbsent(kind(g.cat), () => []).add(g);
+      }
+      final lists = by.values.toList();
+      final mix = <Group>[];
+      for (var i = 0; mix.length < l.length; i++) {
+        for (final s in lists) {
+          if (i < s.length) mix.add(s[i]);
+        }
+      }
+      l = mix;
+    }
     const cats = [
       ['all', 'Semua'],
       ['anime', 'Anime'],
@@ -3934,7 +3949,6 @@ class ProfileTab extends StatelessWidget {
               ]),
             ),
           ),
-          const NotifRow(),
           _theme(),
           const SizedBox(height: 8),
           Tap(
