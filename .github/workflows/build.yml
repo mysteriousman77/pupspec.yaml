@@ -45,7 +45,7 @@ jobs:
           </vector>
           XML
           echo '<resources><color name="notif_accent">#FFFAAE2B</color></resources>' > $RES/values/notif_color.xml
-          sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_notif"/>\n        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notif_accent"/>\n    </application>#' $M
+          sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_notif"/>\n        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notif_accent"/>\n        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="lesehan_push"/>\n    </application>#' $M
 
       # kode native: volume & kecerahan asli perangkat
       - name: Write native MainActivity
@@ -74,6 +74,13 @@ jobs:
 
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      val ch = android.app.NotificationChannel("lesehan_push", "Judul baru", android.app.NotificationManager.IMPORTANCE_HIGH)
+                      ch.description = "Pemberitahuan judul baru (muncul di atas layar)"
+                      ch.enableVibration(true)
+                      ch.lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                      (getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).createNotificationChannel(ch)
+                  }
                   MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lesehan/native")
                       .setMethodCallHandler { call, result ->
                           val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -192,7 +199,7 @@ jobs:
           import javax.crypto.spec.SecretKeySpec
 
           object Notif {
-              private const val CH = "baru"
+              private const val CH = "lesehan_push"
               private const val EVERY = 30 * 60 * 1000L
 
               fun prefs(c: Context) = c.getSharedPreferences("lesehan_notif", Context.MODE_PRIVATE)
@@ -255,7 +262,7 @@ jobs:
               private fun show(c: Context, fresh: Map<String, Int>) {
                   val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                   if (Build.VERSION.SDK_INT >= 26) {
-                      nm.createNotificationChannel(NotificationChannel(CH, "Judul baru", NotificationManager.IMPORTANCE_DEFAULT))
+                      nm.createNotificationChannel(NotificationChannel(CH, "Judul baru", NotificationManager.IMPORTANCE_HIGH))
                   }
                   val names = fresh.keys.toList()
                   val text = if (names.size == 1) {
@@ -274,6 +281,8 @@ jobs:
                       .setStyle(Notification.BigTextStyle().bigText(text))
                       .setContentIntent(pend)
                       .setAutoCancel(true)
+                      .setPriority(Notification.PRIORITY_HIGH)
+                      .setDefaults(Notification.DEFAULT_ALL)
                   nm.notify(2001, b.build())
               }
           }
