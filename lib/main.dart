@@ -183,10 +183,10 @@ Future<void> openUrl(String u) async {
 /// kunci unik per episode (judul+eps+id/src), dijamin tidak bentrok
 /// urutan terbaru: tiap sheet kategori punya "baris terakhir" sendiri,
 /// jadi yang terbaru dari setiap sheet tampil berdampingan
-/// header Referer untuk berkas .mp4 (banyak host menolak permintaan tanpa referer): pakai domain induk host
+/// header Referer untuk link langsung .mp4/.m3u8 (banyak host menolak permintaan tanpa referer): pakai domain induk host
 Map<String, String> videoHeaders(String url) {
   final u = Uri.tryParse(url);
-  if (u == null || !u.path.toLowerCase().endsWith('.mp4')) return const {};
+  if (u == null || !isDirectUrl(url)) return const {};
   final p = u.host.split('.');
   final h = p.length > 2 ? p.sublist(p.length - 2).join('.') : u.host;
   return {'Referer': 'https://$h/', 'Origin': 'https://$h'};
