@@ -382,7 +382,7 @@ jobs:
           fi
 
       # paket crypto (token API) dan share_plus (bagikan rekap)
-      - run: flutter pub add crypto share_plus:^10.1.4 firebase_core firebase_messaging
+      - run: flutter pub add crypto share_plus:^10.1.4 firebase_core firebase_messaging wakelock_plus
       - name: Atur minSdk minimal 23 (syarat Firebase)
         run: |
           [ -f android/app/build.gradle.kts ] && sed -i 's/minSdk = flutter.minSdkVersion/minSdk = maxOf(flutter.minSdkVersion, 23)/' android/app/build.gradle.kts || true
