@@ -1781,6 +1781,70 @@ class _LockS extends State<LockLayer> {
       ]);
 }
 
+/// tekan lama pada pemutar = kecepatan 2x (lepas = kembali normal)
+class HoldSpeed extends StatefulWidget {
+  final VideoPlayerController? c;
+  final Widget child;
+  const HoldSpeed({required this.c, required this.child, super.key});
+  @override
+  State<HoldSpeed> createState() => _HoldSpeedS();
+}
+
+class _HoldSpeedS extends State<HoldSpeed> {
+  bool on = false;
+  double prev = 1;
+
+  void _end() {
+    if (!on) return;
+    on = false;
+    try {
+      widget.c?.setPlaybackSpeed(prev);
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _end();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
+        GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onLongPressStart: (_) {
+            final c = widget.c;
+            if (c == null || !c.value.isInitialized || !c.value.isPlaying) return;
+            prev = c.value.playbackSpeed;
+            c.setPlaybackSpeed(2.0);
+            HapticFeedback.selectionClick();
+            setState(() => on = true);
+          },
+          onLongPressEnd: (_) => _end(),
+          onLongPressCancel: _end,
+          child: widget.child,
+        ),
+        if (on)
+          Positioned(
+              top: 16,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                  child: Center(
+                      child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(20)),
+                          child: const Text('⏩ 2×',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700)))))),
+      ]);
+}
+
 class GestLayer extends StatefulWidget {
   final Widget child;
   final bool fitBtn;
@@ -3671,7 +3735,16 @@ class _CatalogTabState extends State<CatalogTab> {
                 .toList(),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 6),
+            child: Text(
+                '${l.length} judul  •  ${l.fold<int>(0, (a, g) => a + g.eps.length)} video',
+                style: TextStyle(color: mut, fontSize: 12.5)),
+          ),
+        ),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 380),
@@ -4196,6 +4269,14 @@ class ProfileTab extends StatelessWidget {
                 const Text('Bagikan Rekap',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               ]),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 2),
+            child: Center(
+              child: Text(
+                  '📺 ${App.groups.length} judul  •  🎞 ${App.groups.fold<int>(0, (a, g) => a + g.eps.length)} video di LesehanTV',
+                  style: TextStyle(color: mut, fontSize: 12.5)),
             ),
           ),
           _fxCard(),
@@ -4760,6 +4841,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (_holds++ > 0) return;
     _wasPlaying = vc?.value.isPlaying ?? false;
     vc?.pause();
+    _wake(false);
     if (wc != null) {
       _webHeld = true;
       wc!.loadHtmlString('<html><body style="background:#000"></body></html>');
@@ -4809,9 +4891,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     super.initState();
     ep = widget.ep;
     stack.add(this);
-    try {
-      WakelockPlus.enable();
-    } catch (_) {}
+    WidgetsBinding.instance.addPostFrameCallback((_) => _epFocusCur());
+    Future.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) _epFocusCur();
+    });
     satN.addListener(_applyWeb);
     fitN.addListener(_applyWeb);
     WidgetsBinding.instance.addObserver(this);
@@ -4847,6 +4930,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   Future<void> start() async {
     final tk = ++_tok;
+    _wake(false);
     _release();
     _ended = false;
     setState(() {
@@ -4879,20 +4963,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           videoPlayerController: c,
           autoPlay: true,
           aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
-          allowedScreenSleep: false,
+          allowedScreenSleep: true,
           routePageBuilder: (ctx, a, sa, prov) => AnimatedBuilder(
               animation: a,
               builder: (_, __) => Scaffold(
                   resizeToAvoidBottomInset: false,
                   backgroundColor: Colors.black,
                   body: LockLayer(
-                      child: GestLayer(
-                          fitBtn: true,
-                          child: satWrap(fitWrap(
-                              prov,
-                              c.value.aspectRatio == 0
-                                  ? 16 / 9
-                                  : c.value.aspectRatio)))))),
+                      child: HoldSpeed(
+                          c: c,
+                          child: GestLayer(
+                              fitBtn: true,
+                              child: satWrap(fitWrap(
+                                  prov,
+                                  c.value.aspectRatio == 0
+                                      ? 16 / 9
+                                      : c.value.aspectRatio))))))),
           deviceOrientationsOnEnterFullScreen: [
             DeviceOrientation.landscapeLeft,
             DeviceOrientation.landscapeRight
@@ -4905,6 +4991,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               backgroundColor: Colors.white12),
         );
       } else {
+        _wake(true);
         final host = Uri.parse(url).host;
         _web1 = false;
         _loadedAt = 0;
@@ -5023,9 +5110,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  /// layar hanya ditahan menyala saat video benar-benar berjalan (jeda/selesai -> layar boleh mati)
+  bool _wl = false;
+  void _wake(bool on) {
+    if (_wl == on) return;
+    _wl = on;
+    try {
+      on ? WakelockPlus.enable() : WakelockPlus.disable();
+    } catch (_) {}
+  }
+
   void _onTick() {
     final v = vc?.value;
     if (v == null || !v.isInitialized) return;
+    _wake(v.isPlaying);
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - _last > 5000 && v.isPlaying) {
       _last = now;
@@ -5045,21 +5143,34 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         return;
       }
-      _next();
+      // episode berikutnya dipilih manual (tidak otomatis)
     }
   }
 
-  void _next() {
-    final g = App.gm[ep.title];
-    if (g == null) return;
-    final i = g.eps.indexWhere((e) => e.id == ep.id);
-    if (i >= 0 && i < g.eps.length - 1) _go(g.eps[i + 1]);
+  final _epSc = ScrollController();
+
+  /// geser daftar episode agar episode ini berada di sisi kiri-tengah (episode berikutnya mudah dijangkau)
+  void _epFocus(Ep e) {
+    final all = App.gm[ep.title]?.eps ?? const <Ep>[];
+    final idx = all.indexWhere((x) => x.id == e.id);
+    if (idx < 0 || !_epSc.hasClients) return;
+    var off = 0.0;
+    for (var i = 0; i < idx; i++) {
+      final lb = all[i].eps.replaceFirst(RegExp(r'^Eps\s*', caseSensitive: false), '');
+      off += 34 + 8.6 * (lb.isEmpty ? 1 : lb.length) + (Store.seen(all[i].key) ? 21 : 0) + 8;
+    }
+    final vp = _epSc.position.viewportDimension;
+    final to = (off - vp * .28).clamp(0.0, _epSc.position.maxScrollExtent).toDouble();
+    _epSc.animateTo(to, duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
   }
+
+  void _epFocusCur() => _epFocus(ep);
 
   void _go(Ep e) {
     ep = e;
     sv = 0;
     start();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _epFocus(e));
   }
 
   @override
@@ -5067,12 +5178,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _wt?.cancel();
     _slT?.cancel();
     _slTick?.cancel();
+    _epSc.dispose();
     stack.remove(this);
-    if (stack.isEmpty) {
-      try {
-        WakelockPlus.disable();
-      } catch (_) {}
-    }
+    _wake(false);
     satN.removeListener(_applyWeb);
     fitN.removeListener(_applyWeb);
     WidgetsBinding.instance.removeObserver(this);
@@ -5166,9 +5274,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     if (cc != null) {
       final va = vc?.value.aspectRatio ?? 0;
-      return GestLayer(
-          child: satWrap(fitWrap(
-              Chewie(key: _chKey, controller: cc!), va == 0 ? 16 / 9 : va)));
+      return HoldSpeed(
+          c: vc,
+          child: GestLayer(
+              child: satWrap(fitWrap(
+                  Chewie(key: _chKey, controller: cc!), va == 0 ? 16 / 9 : va))));
     }
     if (wc != null) return _web();
     return const SizedBox.shrink();
@@ -5291,6 +5401,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 SizedBox(
                   height: 44,
                   child: ListView.separated(
+                    controller: _epSc,
                     scrollDirection: Axis.horizontal,
                     itemCount: all.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 8),
