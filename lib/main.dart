@@ -4933,6 +4933,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _wake(false);
     _release();
     _ended = false;
+    _seenUi = false;
     setState(() {
       loading = true;
       err = null;
@@ -5111,7 +5112,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// layar hanya ditahan menyala saat video benar-benar berjalan (jeda/selesai -> layar boleh mati)
-  bool _wl = false;
+  bool _wl = false, _seenUi = false;
   void _wake(bool on) {
     if (_wl == on) return;
     _wl = on;
@@ -5129,12 +5130,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _last = now;
       Store.savePos(ep, v.position.inSeconds.toDouble(),
           v.duration.inSeconds.toDouble());
+      if (!_seenUi && mounted && Store.seen(ep.key)) {
+        _seenUi = true;
+        setState(() {});
+      }
     }
     if (!_ended &&
         v.duration.inSeconds > 0 &&
         v.position >= v.duration - const Duration(milliseconds: 500)) {
       _ended = true;
       Store.markSeen(ep.key);
+      if (mounted) setState(() {});
       if (_sl == 'ep') {
         _sl = '0';
         if (mounted) {
@@ -5167,6 +5173,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _epFocusCur() => _epFocus(ep);
 
   void _go(Ep e) {
+    _release(); // simpan posisi episode lama dengan kuncinya sendiri (sebelum ep diganti)
     ep = e;
     sv = 0;
     start();
