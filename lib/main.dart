@@ -1841,93 +1841,6 @@ class _LockS extends State<LockLayer> {
       ]);
 }
 
-/// tombol Eps Sebelumnya / Berikutnya di kiri-kanan tombol 10 detik (muncul saat layar disentuh)
-class NavLayer extends StatefulWidget {
-  final Widget child;
-  final Ep? Function(int) sib;
-  final void Function(Ep) go;
-  const NavLayer({required this.child, required this.sib, required this.go, super.key});
-  @override
-  State<NavLayer> createState() => _NavLayerS();
-}
-
-class _NavLayerS extends State<NavLayer> {
-  bool vis = true;
-  Timer? _h;
-
-  void _show() {
-    _h?.cancel();
-    if (!vis) setState(() => vis = true);
-    _h = Timer(const Duration(milliseconds: 3600), () {
-      if (mounted) setState(() => vis = false);
-    });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _show();
-  }
-
-  @override
-  void dispose() {
-    _h?.cancel();
-    super.dispose();
-  }
-
-  Widget _b(IconData ic, Ep? to, double dx) => Transform.translate(
-        offset: Offset(dx, 0),
-        child: Opacity(
-          opacity: to == null ? .3 : 1,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: to == null
-                ? null
-                : () {
-                    _show();
-                    widget.go(to);
-                  },
-            child: Container(
-              width: 42,
-              height: 42,
-              decoration: const BoxDecoration(
-                  shape: BoxShape.circle, color: Colors.black54),
-              child: Icon(ic, color: Colors.white, size: 26),
-            ),
-          ),
-        ),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    final pv = widget.sib(-1), nx = widget.sib(1);
-    final has = pv != null || nx != null;
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => _show(),
-      child: Stack(fit: StackFit.expand, children: [
-        widget.child,
-        if (has)
-          Positioned.fill(
-            child: IgnorePointer(
-              ignoring: !vis,
-              child: AnimatedOpacity(
-                opacity: vis ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: Center(
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    _b(Icons.skip_previous_rounded, pv, -91),
-                    _b(Icons.skip_next_rounded, nx, 91),
-                  ]),
-                ),
-              ),
-            ),
-          ),
-      ]),
-    );
-  }
-}
-
 /// tekan lama pada pemutar = kecepatan 2x (lepas = kembali normal)
 class HoldSpeed extends StatefulWidget {
   final VideoPlayerController? c;
@@ -1997,30 +1910,59 @@ class GestLayer extends StatefulWidget {
   final bool fitBtn;
   final double toolsLeft;
   final Widget? extra;
+  final VideoPlayerController? vc; // kalau ada: tombol ikut hilang bersama kontrol video
   const GestLayer(
       {required this.child,
       this.fitBtn = false,
       this.toolsLeft = 10,
       this.extra,
+      this.vc,
       super.key});
   @override
   State<GestLayer> createState() => _GestS();
 }
 
 class _GestS extends State<GestLayer> {
-  bool left = false, show = false, satOpen = false;
+  bool left = false, show = false, satOpen = false, toolsVis = true;
   double val = 0;
-  Timer? _h;
+  Timer? _h, _tv;
+
+  /// tombol alat ikut hilang ±3,5 dtk setelah disentuh (seperti kontrol video), tetap tampil saat video dijeda
+  void _poke() {
+    if (widget.vc == null) return;
+    _tv?.cancel();
+    if (!toolsVis) setState(() => toolsVis = true);
+    _tv = Timer(const Duration(milliseconds: 3600), () {
+      final c = widget.vc;
+      if (!mounted) return;
+      if (satOpen || (c != null && c.value.isInitialized && !c.value.isPlaying)) return;
+      setState(() => toolsVis = false);
+    });
+  }
+
+  void _vcl() {
+    final c = widget.vc;
+    if (c == null || !mounted) return;
+    if (c.value.isInitialized && !c.value.isPlaying && !toolsVis) {
+      setState(() => toolsVis = true);
+    } else if (c.value.isPlaying && toolsVis && (_tv == null || !_tv!.isActive)) {
+      _poke();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     Gest.init();
+    widget.vc?.addListener(_vcl);
+    _poke();
   }
 
   @override
   void dispose() {
     _h?.cancel();
+    _tv?.cancel();
+    widget.vc?.removeListener(_vcl);
     super.dispose();
   }
 
@@ -2077,7 +2019,10 @@ class _GestS extends State<GestLayer> {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (_, bc) => Listener(
-          onPointerDown: (_) => Gest.init(),
+          onPointerDown: (_) {
+            Gest.init();
+            _poke();
+          },
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onVerticalDragStart: (d) {
@@ -2103,7 +2048,12 @@ class _GestS extends State<GestLayer> {
                   top: 10,
                   left: widget.toolsLeft,
                   child: SafeArea(
-                    child: Column(
+                    child: IgnorePointer(
+                      ignoring: !toolsVis,
+                      child: AnimatedOpacity(
+                        opacity: toolsVis ? 1 : 0,
+                        duration: const Duration(milliseconds: 220),
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(mainAxisSize: MainAxisSize.min, children: [
@@ -2161,6 +2111,8 @@ class _GestS extends State<GestLayer> {
                               ),
                             ),
                         ]),
+                      ),
+                    ),
                   ),
                 ),
             ]),
@@ -5204,19 +5156,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   resizeToAvoidBottomInset: false,
                   backgroundColor: Colors.black,
                   body: LockLayer(
-                      child: NavLayer(
-                          sib: _sib,
-                          go: _go,
-                          child: HoldSpeed(
-                              c: c,
-                              child: GestLayer(
-                                  fitBtn: true,
-                                  extra: _sleepTool(),
-                                  child: satWrap(fitWrap(
-                                      prov,
-                                      c.value.aspectRatio == 0
-                                          ? 16 / 9
-                                          : c.value.aspectRatio)))))))),
+                      child: HoldSpeed(
+                          c: c,
+                          child: GestLayer(
+                              fitBtn: true,
+                              vc: c,
+                              extra: _sleepTool(),
+                              child: satWrap(fitWrap(
+                                  prov,
+                                  c.value.aspectRatio == 0
+                                      ? 16 / 9
+                                      : c.value.aspectRatio))))))),
           deviceOrientationsOnEnterFullScreen: [
             DeviceOrientation.landscapeLeft,
             DeviceOrientation.landscapeRight
@@ -5414,11 +5364,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   int _gateStage = 0; // 0 = klik pertama, 1 = klik kedua (setelah kembali dari iklan pertama)
   Timer? _gateT;
 
-  bool _gateNeeded() {
-    if (isAdmin) return false;
-    final last = Store.p.getInt('dl_last') ?? 0;
-    return DateTime.now().millisecondsSinceEpoch - last > 180000;
-  }
+  /// layar iklan muncul di setiap video (kecuali mode admin)
+  bool _gateNeeded() => !isAdmin;
 
   /// mulai video; kalau jeda 3 menit sudah lewat, tampilkan layar "klik untuk memulai" dulu
   void _begin() {
@@ -5448,6 +5395,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Future<void> _gateTap() async {
     if (_gateStage == 0) {
       // klik pertama: buka iklan 1x, kembali ke aplikasi -> overlay masih ada
+      Store.p.setInt('dl_last', DateTime.now().millisecondsSinceEpoch);
       final ok = await _openAd();
       if (!mounted) return;
       if (ok) {
@@ -5670,18 +5618,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     if (cc != null) {
       final va = vc?.value.aspectRatio ?? 0;
-      return NavLayer(
-          sib: _sib,
-          go: _go,
-          child: HoldSpeed(
-              c: vc,
-              child: GestLayer(
-                  fitBtn: true,
-                  toolsLeft: 54,
-                  extra: _sleepTool(),
-                  child: satWrap(fitWrap(
-                      Chewie(key: _chKey, controller: cc!),
-                      va == 0 ? 16 / 9 : va)))));
+      return HoldSpeed(
+          c: vc,
+          child: GestLayer(
+              fitBtn: true,
+              toolsLeft: 54,
+              vc: vc,
+              extra: _sleepTool(),
+              child: satWrap(fitWrap(
+                  Chewie(key: _chKey, controller: cc!), va == 0 ? 16 / 9 : va))));
     }
     if (wc != null) return _web();
     return const SizedBox.shrink();
