@@ -174,6 +174,66 @@ String fmtDur(int sec) {
   return h > 0 ? '$h jam $m mnt' : '$m mnt';
 }
 
+const directLink = 'https://uplcm.com/4/12112706';
+
+/// mode admin: tanpa layar iklan (kode disimpan sebagai hash SHA-256, bukan teks asli)
+const _adminHash = '8c7f36032ee9e297b07e695bee103e0e5b8852ff7da2cd60863fe8bf89bd03d5';
+final adminN = ValueNotifier<bool>(false);
+bool get isAdmin => adminN.value;
+
+Future<void> adminDialog(BuildContext c) async {
+  if (adminN.value) {
+    final out = await showDialog<bool>(
+        context: c,
+        builder: (d) => AlertDialog(
+              title: const Text('Mode admin aktif'),
+              content: const Text('Layar iklan dimatikan di perangkat ini.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(d, false),
+                    child: const Text('Tutup')),
+                TextButton(
+                    onPressed: () => Navigator.pop(d, true),
+                    child: const Text('Keluar mode admin')),
+              ],
+            ));
+    if (out == true) {
+      adminN.value = false;
+      Store.p.remove('adm');
+    }
+    return;
+  }
+  final ctl = TextEditingController();
+  final code = await showDialog<String>(
+      context: c,
+      builder: (d) => AlertDialog(
+            title: const Text('Kode admin'),
+            content: TextField(
+                controller: ctl,
+                autofocus: true,
+                obscureText: true,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(hintText: 'Masukkan kode')),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(d),
+                  child: const Text('Batal')),
+              TextButton(
+                  onPressed: () => Navigator.pop(d, ctl.text),
+                  child: const Text('Masuk')),
+            ],
+          ));
+  if (code == null || code.isEmpty) return;
+  final h = sha256.convert(utf8.encode(code.trim().toUpperCase())).toString();
+  if (h == _adminHash) {
+    adminN.value = true;
+    Store.p.setString('adm', _adminHash);
+    if (c.mounted) toast(c, 'Mode admin aktif');
+  } else if (c.mounted) {
+    toast(c, 'Kode salah');
+  }
+}
+
 Future<void> openUrl(String u) async {
   try {
     await launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication);
@@ -1848,13 +1908,15 @@ class _HoldSpeedS extends State<HoldSpeed> {
 class GestLayer extends StatefulWidget {
   final Widget child;
   final bool fitBtn;
-  const GestLayer({required this.child, this.fitBtn = false, super.key});
+  final double toolsLeft;
+  const GestLayer(
+      {required this.child, this.fitBtn = false, this.toolsLeft = 10, super.key});
   @override
   State<GestLayer> createState() => _GestS();
 }
 
 class _GestS extends State<GestLayer> {
-  bool left = false, show = false;
+  bool left = false, show = false, satOpen = false;
   double val = 0;
   Timer? _h;
 
@@ -1906,6 +1968,20 @@ class _GestS extends State<GestLayer> {
         ]),
       );
 
+  Widget _pill(IconData i, String s, bool on) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+            color: Colors.black.withOpacity(.4),
+            borderRadius: BorderRadius.circular(20)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(i, size: 16, color: on ? accent : Colors.white70),
+          const SizedBox(width: 5),
+          Text(s,
+              style: TextStyle(
+                  fontSize: 11, color: on ? accent : Colors.white70)),
+        ]),
+      );
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (_, bc) => Listener(
@@ -1933,30 +2009,62 @@ class _GestS extends State<GestLayer> {
               if (widget.fitBtn)
                 Positioned(
                   top: 10,
-                  left: 10,
+                  left: widget.toolsLeft,
                   child: SafeArea(
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: fitN,
-                      builder: (_, st, __) => Tap(
-                        onTap: () => setFit(!st),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 7),
-                          decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(.4),
-                              borderRadius: BorderRadius.circular(20)),
-                          child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.aspect_ratio,
-                                size: 16, color: st ? accent : Colors.white70),
-                            const SizedBox(width: 5),
-                            Text(st ? 'Regang' : 'Asli',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: st ? accent : Colors.white70)),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            ValueListenableBuilder<bool>(
+                              valueListenable: fitN,
+                              builder: (_, st, __) => Tap(
+                                onTap: () => setFit(!st),
+                                child: _pill(Icons.aspect_ratio,
+                                    st ? 'Regang' : 'Asli', st),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            ValueListenableBuilder<double>(
+                              valueListenable: satN,
+                              builder: (_, v, __) => Tap(
+                                onTap: () => setState(() => satOpen = !satOpen),
+                                child: _pill(Icons.palette_outlined,
+                                    '${v.round()}%', satOpen || v > 100),
+                              ),
+                            ),
                           ]),
-                        ),
-                      ),
-                    ),
+                          if (satOpen)
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              width: 250,
+                              padding: const EdgeInsets.fromLTRB(10, 2, 2, 2),
+                              decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(.6),
+                                  borderRadius: BorderRadius.circular(16)),
+                              child: ValueListenableBuilder<double>(
+                                valueListenable: satN,
+                                builder: (_, v, __) => Row(children: [
+                                  const Text('Saturasi',
+                                      style: TextStyle(
+                                          color: Colors.white70, fontSize: 11)),
+                                  Expanded(
+                                    child: Slider(
+                                      min: 100,
+                                      max: 200,
+                                      divisions: 20,
+                                      value: v.clamp(100.0, 200.0),
+                                      onChanged: setSat,
+                                    ),
+                                  ),
+                                  IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      icon: const Icon(Icons.restart_alt,
+                                          size: 18, color: Colors.white70),
+                                      onPressed: () => setSat(100)),
+                                ]),
+                              ),
+                            ),
+                        ]),
                   ),
                 ),
             ]),
@@ -2855,6 +2963,7 @@ Future<void> main() async {
   curTh = themes.firstWhere((t) => t.id == sv, orElse: () => themes[0]);
   themeId.value = curTh.id;
   fxUltra.value = Store.p.getBool('ultra') ?? true;
+  adminN.value = Store.p.getString('adm') == _adminHash;
   satN.value = (Store.p.getDouble('sat') ?? 100).clamp(100.0, 200.0);
   fitN.value = Store.p.getBool('fit') ?? false;
   runApp(const LesehanApp());
@@ -4298,6 +4407,26 @@ class ProfileTab extends StatelessWidget {
                       fontSize: 14)),
             ),
           ),
+          const SizedBox(height: 26),
+          Center(
+            child: ValueListenableBuilder<bool>(
+              valueListenable: adminN,
+              builder: (ctx, on, _) => GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => adminDialog(ctx),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                  child: Opacity(
+                    opacity: .28,
+                    child: Text(on ? 'admin ●' : 'admin',
+                        style: TextStyle(color: mut, fontSize: 11)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: navPad - 60),
         ],
       );
 }
@@ -4904,12 +5033,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!playing) return;
       Store.addWatch(ep, 5);
     });
-    start();
+    if (_gateNeeded()) {
+      _gate = true;
+      loading = false;
+    } else {
+      start();
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _resumed = state == AppLifecycleState.resumed;
+    if (_resumed && _waitRet) {
+      Future.delayed(const Duration(milliseconds: 400), _afterAd);
+    }
   }
 
   void _release() {
@@ -5155,8 +5292,113 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   final _epSc = ScrollController();
 
+  /* ===== direct link sebelum memutar (jeda 3 menit) ===== */
+  bool _gate = false, _waitRet = false;
+  int _gateStage = 0; // 0 = klik pertama, 1 = klik kedua (setelah kembali dari iklan pertama)
+  Timer? _gateT;
+
+  bool _gateNeeded() {
+    if (isAdmin) return false;
+    final last = Store.p.getInt('dl_last') ?? 0;
+    return DateTime.now().millisecondsSinceEpoch - last > 180000;
+  }
+
+  /// mulai video; kalau jeda 3 menit sudah lewat, tampilkan layar "klik untuk memulai" dulu
+  void _begin() {
+    if (_gateNeeded()) {
+      _release();
+      _wake(false);
+      setState(() {
+        _gate = true;
+        _gateStage = 0;
+        loading = false;
+        err = null;
+      });
+    } else {
+      start();
+    }
+  }
+
+  Future<bool> _openAd() async {
+    try {
+      return await launchUrl(Uri.parse(directLink),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _gateTap() async {
+    if (_gateStage == 0) {
+      // klik pertama: buka iklan 1x, kembali ke aplikasi -> overlay masih ada
+      final ok = await _openAd();
+      if (!mounted) return;
+      if (ok) {
+        setState(() => _gateStage = 1);
+        return;
+      }
+    }
+    // klik kedua: buka iklan lagi, setelah kembali video baru diputar
+    Store.p.setInt('dl_last', DateTime.now().millisecondsSinceEpoch);
+    setState(() {
+      _gate = false;
+      loading = true;
+      _waitRet = true;
+    });
+    final ok2 = _gateStage == 0 ? false : await _openAd();
+    if (!ok2) _afterAd(); // gagal membuka iklan: jangan tahan video
+  }
+
+  void _afterAd() {
+    if (!_waitRet || !mounted) return;
+    _waitRet = false;
+    _gateT?.cancel();
+    start();
+  }
+
+  Widget _gateView() => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _gateTap,
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Colors.black, accent.withOpacity(.25)])),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.play_circle_fill_rounded, size: 54, color: accent),
+                const SizedBox(height: 8),
+                const Text('Klik dimana saja untuk memulai video',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                const Text(
+                    '"Terima kasih sudah mengklik ku 1 kali, untuk menampilkan iklan dan play video, semoga dilancarkan rezekinya dan sehat selalu buat kamu."',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12.5,
+                        height: 1.4,
+                        fontStyle: FontStyle.italic)),
+              ]),
+            ),
+          ),
+        ),
+      );
+
   /// geser daftar episode agar episode ini berada di sisi kiri-tengah (episode berikutnya mudah dijangkau)
-  void _epFocus(Ep e) {
+  bool _wasLand = false;
+
+  void _epFocus(Ep e, {bool anim = true}) {
     final all = App.gm[ep.title]?.eps ?? const <Ep>[];
     final idx = all.indexWhere((x) => x.id == e.id);
     if (idx < 0 || !_epSc.hasClients) return;
@@ -5167,7 +5409,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     final vp = _epSc.position.viewportDimension;
     final to = (off - vp * .28).clamp(0.0, _epSc.position.maxScrollExtent).toDouble();
-    _epSc.animateTo(to, duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
+    if (anim) {
+      _epSc.animateTo(to,
+          duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic);
+    } else {
+      _epSc.jumpTo(to);
+    }
   }
 
   void _epFocusCur() => _epFocus(ep);
@@ -5176,7 +5423,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _release(); // simpan posisi episode lama dengan kuncinya sendiri (sebelum ep diganti)
     ep = e;
     sv = 0;
-    start();
+    _waitRet = false;
+    _begin();
     WidgetsBinding.instance.addPostFrameCallback((_) => _epFocus(e));
   }
 
@@ -5185,6 +5433,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _wt?.cancel();
     _slT?.cancel();
     _slTick?.cancel();
+    _gateT?.cancel();
     _epSc.dispose();
     stack.remove(this);
     _wake(false);
@@ -5256,7 +5505,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
+  bool get _land => MediaQuery.of(context).orientation == Orientation.landscape;
+
   Widget _video() {
+    if (_gate) return _gateView();
     if (loading) return const PlayerSkel();
     if (err != null) {
       final n = 1 + ep.extra.length;
@@ -5284,6 +5536,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       return HoldSpeed(
           c: vc,
           child: GestLayer(
+              fitBtn: _land,
+              toolsLeft: 54,
               child: satWrap(fitWrap(
                   Chewie(key: _chKey, controller: cc!), va == 0 ? 16 / 9 : va))));
     }
@@ -5292,7 +5546,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Widget _web() => Stack(fit: StackFit.expand, children: [
-        GestLayer(child: WebViewWidget(key: _wvKey, controller: wc!)),
+        GestLayer(
+            fitBtn: _land || _fs,
+            toolsLeft: _fs ? 10 : 54,
+            child: WebViewWidget(key: _wvKey, controller: wc!)),
         Positioned(
           top: 6,
           right: 6,
@@ -5422,6 +5679,44 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     },
                   ),
                 ),
+                const SizedBox(height: 10),
+                Builder(builder: (_) {
+                  final ix = all.indexWhere((x) => x.id == ep.id);
+                  final pv = ix > 0 ? all[ix - 1] : null;
+                  final nx = ix >= 0 && ix < all.length - 1 ? all[ix + 1] : null;
+                  Widget nb(String s, IconData ic, Ep? to, bool right) => Expanded(
+                        child: Opacity(
+                          opacity: to == null ? .35 : 1,
+                          child: Tap(
+                            onTap: to == null ? null : () => _go(to),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              decoration: BoxDecoration(
+                                  color: fg.withOpacity(.06),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: lineC)),
+                              child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    if (!right) Icon(ic, size: 18, color: accent),
+                                    if (!right) const SizedBox(width: 6),
+                                    Text(s,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600)),
+                                    if (right) const SizedBox(width: 6),
+                                    if (right) Icon(ic, size: 18, color: accent),
+                                  ]),
+                            ),
+                          ),
+                        ),
+                      );
+                  return Row(children: [
+                    nb('Eps Sebelumnya', Icons.skip_previous_rounded, pv, false),
+                    const SizedBox(width: 10),
+                    nb('Eps Berikutnya', Icons.skip_next_rounded, nx, true),
+                  ]);
+                }),
               ],
               if (g != null) recSection(g),
       ]);
@@ -5546,7 +5841,36 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ),
       ]),
     );
+    final satPop = Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 8, 0),
+      child: Row(children: [
+        Icon(Icons.shield_outlined, size: 18, color: accent),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('Blokir pop-up iklan (disarankan)',
+              style: TextStyle(color: mut, fontSize: 12)),
+        ),
+        Switch(
+          value: _pb,
+          onChanged: (v) {
+            setState(() => _pb = v);
+            Store.p.setBool('popblock', v);
+            start();
+          },
+        ),
+      ]),
+    );
     final info = _infoList(g, all, names);
+    if (land) {
+      if (!_wasLand) _wasLand = true;
+    } else if (_wasLand) {
+      _wasLand = false;
+      // kembali ke potret: daftar episode tetap fokus ke episode yang sedang diputar
+      WidgetsBinding.instance.addPostFrameCallback((_) => _epFocus(ep, anim: false));
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (mounted) _epFocus(ep, anim: false);
+      });
+    }
     if (land) {
       // lanskap: kiri khusus pemutar, kanan info/server/episode/rekomendasi
       return Scaffold(
@@ -5563,7 +5887,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             ),
             Expanded(
               flex: 3,
-              child: Column(children: [sat, Expanded(child: info)]),
+              child: Column(children: [
+                if (wc != null) satPop,
+                Expanded(child: info)
+              ]),
             ),
           ]),
         ),
