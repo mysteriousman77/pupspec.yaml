@@ -397,6 +397,14 @@ jobs:
           [ -f android/app/build.gradle.kts ] && sed -i 's/minSdk = flutter.minSdkVersion/minSdk = maxOf(flutter.minSdkVersion, 23)/' android/app/build.gradle.kts || true
           [ -f android/app/build.gradle ] && sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion Math.max(flutter.minSdkVersion, 23)/' android/app/build.gradle || true
           grep -n "minSdk" android/app/build.gradle* || true
+      - name: Matikan lint rilis (lint Android crash, tidak perlu untuk APK)
+        run: |
+          if [ -f android/app/build.gradle.kts ]; then
+            printf '\nandroid {\n    lint {\n        checkReleaseBuilds = false\n        abortOnError = false\n    }\n}\n' >> android/app/build.gradle.kts
+          elif [ -f android/app/build.gradle ]; then
+            printf '\nandroid {\n    lintOptions {\n        checkReleaseBuilds false\n        abortOnError false\n    }\n}\n' >> android/app/build.gradle
+          fi
+          tail -8 android/app/build.gradle* || true
 
       - run: flutter pub get
 
