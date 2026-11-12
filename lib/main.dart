@@ -1841,6 +1841,93 @@ class _LockS extends State<LockLayer> {
       ]);
 }
 
+/// tombol Eps Sebelumnya / Berikutnya di kiri-kanan tombol 10 detik (muncul saat layar disentuh)
+class NavLayer extends StatefulWidget {
+  final Widget child;
+  final Ep? Function(int) sib;
+  final void Function(Ep) go;
+  const NavLayer({required this.child, required this.sib, required this.go, super.key});
+  @override
+  State<NavLayer> createState() => _NavLayerS();
+}
+
+class _NavLayerS extends State<NavLayer> {
+  bool vis = true;
+  Timer? _h;
+
+  void _show() {
+    _h?.cancel();
+    if (!vis) setState(() => vis = true);
+    _h = Timer(const Duration(milliseconds: 3600), () {
+      if (mounted) setState(() => vis = false);
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _show();
+  }
+
+  @override
+  void dispose() {
+    _h?.cancel();
+    super.dispose();
+  }
+
+  Widget _b(IconData ic, Ep? to, double dx) => Transform.translate(
+        offset: Offset(dx, 0),
+        child: Opacity(
+          opacity: to == null ? .3 : 1,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: to == null
+                ? null
+                : () {
+                    _show();
+                    widget.go(to);
+                  },
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(
+                  shape: BoxShape.circle, color: Colors.black54),
+              child: Icon(ic, color: Colors.white, size: 26),
+            ),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final pv = widget.sib(-1), nx = widget.sib(1);
+    final has = pv != null || nx != null;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _show(),
+      child: Stack(fit: StackFit.expand, children: [
+        widget.child,
+        if (has)
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !vis,
+              child: AnimatedOpacity(
+                opacity: vis ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: Center(
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    _b(Icons.skip_previous_rounded, pv, -91),
+                    _b(Icons.skip_next_rounded, nx, 91),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
 /// tekan lama pada pemutar = kecepatan 2x (lepas = kembali normal)
 class HoldSpeed extends StatefulWidget {
   final VideoPlayerController? c;
@@ -1909,8 +1996,13 @@ class GestLayer extends StatefulWidget {
   final Widget child;
   final bool fitBtn;
   final double toolsLeft;
+  final Widget? extra;
   const GestLayer(
-      {required this.child, this.fitBtn = false, this.toolsLeft = 10, super.key});
+      {required this.child,
+      this.fitBtn = false,
+      this.toolsLeft = 10,
+      this.extra,
+      super.key});
   @override
   State<GestLayer> createState() => _GestS();
 }
@@ -2032,6 +2124,10 @@ class _GestS extends State<GestLayer> {
                                     '${v.round()}%', satOpen || v > 100),
                               ),
                             ),
+                            if (widget.extra != null) ...[
+                              const SizedBox(width: 6),
+                              widget.extra!,
+                            ],
                           ]),
                           if (satOpen)
                             Container(
@@ -5108,15 +5204,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   resizeToAvoidBottomInset: false,
                   backgroundColor: Colors.black,
                   body: LockLayer(
-                      child: HoldSpeed(
-                          c: c,
-                          child: GestLayer(
-                              fitBtn: true,
-                              child: satWrap(fitWrap(
-                                  prov,
-                                  c.value.aspectRatio == 0
-                                      ? 16 / 9
-                                      : c.value.aspectRatio))))))),
+                      child: NavLayer(
+                          sib: _sib,
+                          go: _go,
+                          child: HoldSpeed(
+                              c: c,
+                              child: GestLayer(
+                                  fitBtn: true,
+                                  extra: _sleepTool(),
+                                  child: satWrap(fitWrap(
+                                      prov,
+                                      c.value.aspectRatio == 0
+                                          ? 16 / 9
+                                          : c.value.aspectRatio)))))))),
           deviceOrientationsOnEnterFullScreen: [
             DeviceOrientation.landscapeLeft,
             DeviceOrientation.landscapeRight
@@ -5128,6 +5228,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               bufferedColor: Colors.white30,
               backgroundColor: Colors.white12),
         );
+        if (_reFs) {
+          _reFs = false;
+          final cur = cc;
+          Future.delayed(const Duration(milliseconds: 700), () {
+            if (mounted && cc == cur) {
+              try {
+                cc?.enterFullScreen();
+              } catch (_) {}
+            }
+          });
+        }
       } else {
         _wake(true);
         final host = Uri.parse(url).host;
@@ -5223,12 +5334,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _slTick?.cancel();
     _slEnd = null;
     setState(() => _sl = v);
+    _slN.value = _slLabel();
     final m = int.tryParse(v);
     if (m != null && m > 0) {
       _slEnd = DateTime.now().add(Duration(minutes: m));
       _slT = Timer(Duration(minutes: m), _sleepNow);
       _slTick = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {});
+          _slN.value = _slLabel();
+        }
       });
     }
     if (v != '0') toast(context, '😴 Pewaktu tidur: ${_slLabel()}');
@@ -5242,6 +5357,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       wc!.loadHtmlString('<html><body style="background:#000"></body></html>');
     }
     if (_fs) _exitFs();
+    _slN.value = 'Mati';
     if (mounted) {
       setState(() => _sl = '0');
       toast(context, '😴 Pewaktu tidur: video dihentikan');
@@ -5280,6 +5396,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (mounted) setState(() {});
       if (_sl == 'ep') {
         _sl = '0';
+        _slN.value = 'Mati';
         if (mounted) {
           setState(() {});
           toast(context, '😴 Pewaktu tidur: episode selesai');
@@ -5419,7 +5536,26 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _epFocusCur() => _epFocus(ep);
 
+  bool _reFs = false;
+
   void _go(Ep e) {
+    final wasFs = cc?.isFullScreen ?? false;
+    if (wasFs) {
+      // keluar dari layar penuh dulu (pemutar lama akan dibuang), lalu masuk lagi setelah pemutar baru siap
+      try {
+        cc?.exitFullScreen();
+      } catch (_) {}
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (!mounted) return;
+        _reFs = !_gateNeeded();
+        _go2(e);
+      });
+      return;
+    }
+    _go2(e);
+  }
+
+  void _go2(Ep e) {
     _release(); // simpan posisi episode lama dengan kuncinya sendiri (sebelum ep diganti)
     ep = e;
     sv = 0;
@@ -5433,6 +5569,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _wt?.cancel();
     _slT?.cancel();
     _slTick?.cancel();
+    _slN.dispose();
     _gateT?.cancel();
     _epSc.dispose();
     stack.remove(this);
@@ -5533,13 +5670,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     if (cc != null) {
       final va = vc?.value.aspectRatio ?? 0;
-      return HoldSpeed(
-          c: vc,
-          child: GestLayer(
-              fitBtn: _land,
-              toolsLeft: 54,
-              child: satWrap(fitWrap(
-                  Chewie(key: _chKey, controller: cc!), va == 0 ? 16 / 9 : va))));
+      return NavLayer(
+          sib: _sib,
+          go: _go,
+          child: HoldSpeed(
+              c: vc,
+              child: GestLayer(
+                  fitBtn: true,
+                  toolsLeft: 54,
+                  extra: _sleepTool(),
+                  child: satWrap(fitWrap(
+                      Chewie(key: _chKey, controller: cc!),
+                      va == 0 ? 16 / 9 : va)))));
     }
     if (wc != null) return _web();
     return const SizedBox.shrink();
@@ -5547,8 +5689,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   Widget _web() => Stack(fit: StackFit.expand, children: [
         GestLayer(
-            fitBtn: _land || _fs,
+            fitBtn: true,
             toolsLeft: _fs ? 10 : 54,
+            extra: _sleepTool(),
             child: WebViewWidget(key: _wvKey, controller: wc!)),
         Positioned(
           top: 6,
@@ -5608,37 +5751,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   ),
                 ),
               ]),
-              const SizedBox(height: 16),
-              Row(children: [
-                const Expanded(child: Text('😴 Pewaktu Tidur')),
-                Text(_slLabel(),
-                    style: TextStyle(color: accent, fontWeight: FontWeight.w700)),
-              ]),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 42,
-                child: ListView(scrollDirection: Axis.horizontal, children: [
-                  for (final o in [
-                    ['0', 'Mati'],
-                    ['15', '15 mnt'],
-                    ['30', '30 mnt'],
-                    ['45', '45 mnt'],
-                    ['60', '60 mnt'],
-                    if (cc != null) ['ep', 'Akhir episode'],
-                  ])
-                    Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: chipB(
-                            o[1],
-                            (_sl == o[0]) ||
-                                (o[0] != '0' &&
-                                    o[0] != 'ep' &&
-                                    _sl != '0' &&
-                                    _sl != 'ep' &&
-                                    _sl == o[0]),
-                            () => _setSleep(o[0]))),
-                ]),
-              ),
               if (names.length > 1) ...[
                 const SizedBox(height: 16),
                 const Text('🖥 Pilih Server'),
@@ -5679,47 +5791,102 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     },
                   ),
                 ),
-                const SizedBox(height: 10),
-                Builder(builder: (_) {
-                  final ix = all.indexWhere((x) => x.id == ep.id);
-                  final pv = ix > 0 ? all[ix - 1] : null;
-                  final nx = ix >= 0 && ix < all.length - 1 ? all[ix + 1] : null;
-                  Widget nb(String s, IconData ic, Ep? to, bool right) => Expanded(
-                        child: Opacity(
-                          opacity: to == null ? .35 : 1,
-                          child: Tap(
-                            onTap: to == null ? null : () => _go(to),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 11),
-                              decoration: BoxDecoration(
-                                  color: fg.withOpacity(.06),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: lineC)),
-                              child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    if (!right) Icon(ic, size: 18, color: accent),
-                                    if (!right) const SizedBox(width: 6),
-                                    Text(s,
-                                        style: const TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600)),
-                                    if (right) const SizedBox(width: 6),
-                                    if (right) Icon(ic, size: 18, color: accent),
-                                  ]),
-                            ),
-                          ),
-                        ),
-                      );
-                  return Row(children: [
-                    nb('Eps Sebelumnya', Icons.skip_previous_rounded, pv, false),
-                    const SizedBox(width: 10),
-                    nb('Eps Berikutnya', Icons.skip_next_rounded, nx, true),
-                  ]);
-                }),
               ],
               if (g != null) recSection(g),
       ]);
+
+  Ep? _sib(int d) {
+    final all = App.gm[ep.title]?.eps ?? const <Ep>[];
+    final i = all.indexWhere((x) => x.id == ep.id);
+    final j = i + d;
+    return (i >= 0 && j >= 0 && j < all.length) ? all[j] : null;
+  }
+
+  /// tombol Eps Sebelumnya / Berikutnya tepat di bawah pemutar (hanya judul berepisode)
+  Widget _epBar() {
+    if ((App.gm[ep.title]?.eps.length ?? 1) < 2) return const SizedBox.shrink();
+    Widget nb(String s, IconData ic, Ep? to, bool right) => Expanded(
+          child: Opacity(
+            opacity: to == null ? .35 : 1,
+            child: Tap(
+              onTap: to == null ? null : () => _go(to),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                    color: fg.withOpacity(.06),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: lineC)),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  if (!right) Icon(ic, size: 18, color: accent),
+                  if (!right) const SizedBox(width: 6),
+                  Text(s,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600)),
+                  if (right) const SizedBox(width: 6),
+                  if (right) Icon(ic, size: 18, color: accent),
+                ]),
+              ),
+            ),
+          ),
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+      child: Row(children: [
+        nb('Eps Sebelumnya', Icons.skip_previous_rounded, _sib(-1), false),
+        const SizedBox(width: 10),
+        nb('Eps Berikutnya', Icons.skip_next_rounded, _sib(1), true),
+      ]),
+    );
+  }
+
+  /// pewaktu tidur di dalam pemutar (di samping saturasi)
+  final _slN = ValueNotifier<String>('Mati');
+
+  Widget _sleepTool() => ValueListenableBuilder<String>(
+        valueListenable: _slN,
+        builder: (_, lb, __) => Tap(
+          onTap: () => showDialog(
+              context: context,
+              builder: (d) => SimpleDialog(
+                    title: const Text('😴 Pewaktu Tidur'),
+                    children: [
+                      for (final o in [
+                        ['0', 'Mati'],
+                        ['15', '15 menit'],
+                        ['30', '30 menit'],
+                        ['45', '45 menit'],
+                        ['60', '60 menit'],
+                        if (cc != null) ['ep', 'Akhir episode'],
+                      ])
+                        SimpleDialogOption(
+                            onPressed: () {
+                              Navigator.pop(d);
+                              _setSleep(o[0]);
+                            },
+                            child: Text(o[1],
+                                style: TextStyle(
+                                    fontWeight: _sl == o[0]
+                                        ? FontWeight.w700
+                                        : FontWeight.w400,
+                                    color: _sl == o[0] ? accent : null))),
+                    ],
+                  )),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+                color: Colors.black.withOpacity(.4),
+                borderRadius: BorderRadius.circular(20)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('😴', style: TextStyle(fontSize: 12, color: _sl != '0' ? accent : Colors.white70)),
+              const SizedBox(width: 4),
+              Text(lb,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: _sl != '0' ? accent : Colors.white70)),
+            ]),
+          ),
+        ),
+      );
 
   Widget? _cw;
   VoidCallback? _cwHide;
@@ -5904,7 +6071,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               child: Container(
                   color: Colors.black,
                   child: Stack(fit: StackFit.expand, children: [_video(), back]))),
-          sat,
+          _epBar(),
+          if (wc != null) satPop,
           Expanded(child: info),
         ]),
       ),
