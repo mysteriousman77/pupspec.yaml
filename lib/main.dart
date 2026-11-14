@@ -175,6 +175,8 @@ String fmtDur(int sec) {
 }
 
 const directLink = 'https://uplcm.com/4/12112706';
+/// true di Android TV / STB (diisi sekali saat aplikasi mulai)
+bool isTv = false;
 
 /// mode admin: tanpa layar iklan (kode disimpan sebagai hash SHA-256, bukan teks asli)
 const _adminHash = '8c7f36032ee9e297b07e695bee103e0e5b8852ff7da2cd60863fe8bf89bd03d5';
@@ -477,6 +479,9 @@ class App {
       }
       final src = s(it['src']), rid = s(it['id']);
       if (src.isEmpty && rid.isEmpty) continue;
+      if (kind((s(it['kategori']).isEmpty ? 'anime' : s(it['kategori']))
+              .toLowerCase()) !=
+          'movie') continue; // aplikasi hanya menampilkan film
       final epr = s(it['eps']);
       final eps =
           (epr.isNotEmpty && double.tryParse(epr) != null) ? 'Eps $epr' : epr;
@@ -1456,29 +1461,56 @@ class Tap extends StatefulWidget {
 }
 
 class _TapS extends State<Tap> {
-  bool d = false;
+  bool d = false, f = false;
   void _s(bool v) {
     if (mounted && d != v) setState(() => d = v);
   }
 
+  void _go() {
+    if (widget.onTap == null) return;
+    // tap cepat tetap terlihat "memantul"
+    _s(true);
+    Future.delayed(const Duration(milliseconds: 110), () => _s(false));
+    widget.onTap!();
+  }
+
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTapDown: (_) => _s(true),
-        onTapUp: (_) => _s(false),
-        onTapCancel: () => _s(false),
-        onTap: widget.onTap == null
-            ? null
-            : () {
-                // tap cepat tetap terlihat "memantul"
-                _s(true);
-                Future.delayed(const Duration(milliseconds: 110), () => _s(false));
-                widget.onTap!();
-              },
-        child: AnimatedScale(
-            scale: d ? (ultra ? .94 : .96) : 1,
-            duration: const Duration(milliseconds: 110),
-            curve: Curves.easeOut,
-            child: widget.child),
+  Widget build(BuildContext context) => FocusableActionDetector(
+        enabled: widget.onTap != null,
+        onShowFocusHighlight: (v) {
+          if (mounted && f != v) setState(() => f = v);
+        },
+        onFocusChange: (v) {
+          // remote / D-pad: gulir otomatis supaya item yang difokus terlihat
+          if (v && mounted) {
+            Scrollable.ensureVisible(context,
+                alignment: .5, duration: const Duration(milliseconds: 160));
+          }
+        },
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+            _go();
+            return null;
+          }),
+        },
+        child: Container(
+          foregroundDecoration: f
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: accent, width: 3))
+              : null,
+          child: GestureDetector(
+            onTapDown: (_) => _s(true),
+            onTapUp: (_) => _s(false),
+            onTapCancel: () => _s(false),
+            onTap: widget.onTap == null ? null : _go,
+            child: AnimatedScale(
+                scale: d || f ? (ultra ? .94 : .96) : 1,
+                duration: const Duration(milliseconds: 110),
+                curve: Curves.easeOut,
+                child: widget.child),
+          ),
+        ),
       );
 }
 
@@ -2696,13 +2728,6 @@ class _PickerS extends State<PickerSheet> {
   @override
   Widget build(BuildContext context) {
     final x = g;
-    final cats = [
-      ['all', 'Semua'],
-      ['anime', 'Anime'],
-      ['donghua', 'Donghua'],
-      ['drama', 'Drama'],
-      ['movie', 'Film'],
-    ];
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       child: BackdropFilter(
@@ -2726,18 +2751,6 @@ class _PickerS extends State<PickerSheet> {
             const Text('🎲 Bingung mau nonton apa?',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 42,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: cats.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (_, i) => chipB(cats[i][1], cat == cats[i][0], () {
-                  cat = cats[i][0];
-                  _roll();
-                }),
-              ),
-            ),
             const SizedBox(height: 14),
             if (x == null)
               const Padding(
@@ -3014,6 +3027,9 @@ Future<void> main() async {
   adminN.value = Store.p.getString('adm') == _adminHash;
   satN.value = (Store.p.getDouble('sat') ?? 100).clamp(100.0, 200.0);
   fitN.value = Store.p.getBool('fit') ?? false;
+  try {
+    isTv = (await _nat.invokeMethod<bool>('isTv')) ?? false;
+  } catch (_) {}
   runApp(const LesehanApp());
   initPush().then((_) => syncPush(Store.p.getBool('notif') ?? true));
 }
@@ -3459,6 +3475,32 @@ class _HomeTabState extends State<HomeTab> {
     super.dispose();
   }
 
+  /// baris per genre (isian sheet dulu, kalau kosong pakai hasil TMDB), terbanyak dulu
+  List<Widget> genreRows(List<Group> latest) {
+    final by = <String, List<Group>>{};
+    for (final g in latest) {
+      var gs = g.gen
+          .split(RegExp(r'[,;|]'))
+          .map((x) => x.trim())
+          .where((x) => x.isNotEmpty)
+          .toList();
+      if (gs.isEmpty) {
+        gs = ((App.metaOf(g.title)['g'] as List?) ?? [])
+            .map((x) => x.toString())
+            .toList();
+      }
+      for (final n in gs) {
+        (by[n] ??= []).add(g);
+      }
+    }
+    final ks = by.keys.where((k) => by[k]!.length >= 3).toList()
+      ..sort((a, b) => by[b]!.length.compareTo(by[a]!.length));
+    return [
+      for (final k in ks.take(10))
+        section(k, by[k]!.take(12).map((g) => GroupCard(g, width: 190)).toList())
+    ];
+  }
+
   List<Group> pick() {
     final l = App.groups.where((g) => g.thumb.isNotEmpty).toList()
       ..shuffle(Random());
@@ -3471,12 +3513,6 @@ class _HomeTabState extends State<HomeTab> {
     final hs =
         Store.hist.map((h) => App.byKey[h['key']]).whereType<Ep>().toList();
     final latest = [...App.groups]..sort(newer);
-    final kinds = [
-      ['anime', 'Anime'],
-      ['donghua', 'Donghua'],
-      ['drama', 'Drama'],
-      ['movie', 'Film'],
-    ];
     return ListView(
       padding: EdgeInsets.fromLTRB(14, 12, 14, navPad),
       children: [
@@ -3598,13 +3634,11 @@ class _HomeTabState extends State<HomeTab> {
               auto: false,
               more: () => App.tab.value = 3),
         top10(),
-        for (final k in kinds)
-          Builder(builder: (_) {
-            final l = latest.where((g) => kind(g.cat) == k[0]).take(12).toList();
-            if (l.isEmpty) return const SizedBox.shrink();
-            return section(k[1], l.map((g) => GroupCard(g, width: 190)).toList(),
-                more: () => goCat(k[0]));
-          }),
+        if (latest.isNotEmpty)
+          section('Film',
+              latest.take(12).map((g) => GroupCard(g, width: 190)).toList(),
+              more: () => goCat('all')),
+        for (final gr in genreRows(latest)) gr,
       ],
     );
   }
@@ -3849,13 +3883,6 @@ class _CatalogTabState extends State<CatalogTab> {
       }
       l = mix;
     }
-    const cats = [
-      ['all', 'Semua'],
-      ['anime', 'Anime'],
-      ['donghua', 'Donghua'],
-      ['movie', 'Film'],
-      ['drama', 'Drama'],
-    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
       child: Column(children: [
@@ -3875,30 +3902,13 @@ class _CatalogTabState extends State<CatalogTab> {
                 borderSide: BorderSide.none),
           ),
         ),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 42,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: cats
-                .map((c) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: chipB(c[1], cat == c[0],
-                          () => setState(() {
-                                cat = c[0];
-                                pg = 0;
-                              })),
-                    ))
-                .toList(),
-          ),
-        ),
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
           child: Padding(
             padding: const EdgeInsets.only(left: 2, bottom: 6),
             child: Text(
-                '${l.length} judul  •  ${l.fold<int>(0, (a, g) => a + g.eps.length)} video',
+                '${l.length} judul',
                 style: TextStyle(color: mut, fontSize: 12.5)),
           ),
         ),
@@ -4393,49 +4403,42 @@ class ProfileTab extends StatelessWidget {
               child: Text('Streaming santai di mana saja',
                   style: TextStyle(color: mut, fontSize: 13))),
           const SizedBox(height: 18),
-          Tap(
-            onTap: () => openUrl('https://saweria.co/AKUINGINTERKENAL'),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  gradient: const LinearGradient(
-                      colors: [Color(0xFFFAAE2B), Color(0xFFD35400)])),
-              child: const Text('❤ Dukung LesehanTV via Saweria',
-                  style: TextStyle(
-                      color: Color(0xFF12181F),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14)),
-            ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+                color: cardc,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: fg.withOpacity(.08))),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('❤ Dukung LesehanTV',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text('Aplikasi dan web ini gratis. Kalau terbantu, boleh traktir lewat donasi.',
+                  style: TextStyle(color: mut, fontSize: 13, height: 1.4)),
+              const SizedBox(height: 8),
+              Text('📺 ${App.groups.length} judul di LesehanTV',
+                  style: TextStyle(color: mut, fontSize: 12.5)),
+              const SizedBox(height: 12),
+              Tap(
+                onTap: () => openUrl('https://saweria.co/AKUINGINTERKENAL'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: const LinearGradient(
+                          colors: [Color(0xFFFAAE2B), Color(0xFFD35400)])),
+                  child: const Text('❤ Dukung via Saweria',
+                      style: TextStyle(
+                          color: Color(0xFF12181F),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14)),
+                ),
+              ),
+            ]),
           ),
           const SizedBox(height: 8),
-          _recap(),
-          Tap(
-            onTap: () => _shareRecap(context),
-            child: Container(
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: accent.withOpacity(.6))),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.ios_share, size: 18, color: accent),
-                const SizedBox(width: 8),
-                const Text('Bagikan Rekap',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-              ]),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 2),
-            child: Center(
-              child: Text(
-                  '📺 ${App.groups.length} judul  •  🎞 ${App.groups.fold<int>(0, (a, g) => a + g.eps.length)} video di LesehanTV',
-                  style: TextStyle(color: mut, fontSize: 12.5)),
-            ),
-          ),
           _fxCard(),
           _theme(),
           const SizedBox(height: 8),
@@ -5148,6 +5151,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         cc = ChewieController(
           videoPlayerController: c,
           autoPlay: true,
+          showControls: !isTv,
+          allowFullScreen: !isTv,
           aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
           allowedScreenSleep: true,
           routePageBuilder: (ctx, a, sa, prov) => AnimatedBuilder(
@@ -5365,7 +5370,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Timer? _gateT;
 
   /// layar iklan muncul di setiap video (kecuali mode admin)
-  bool _gateNeeded() => !isAdmin;
+  bool _gateNeeded() => !isAdmin && !isTv;
 
   /// mulai video; kalau jeda 3 menit sudah lewat, tampilkan layar "klik untuk memulai" dulu
   void _begin() {
@@ -5519,6 +5524,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _slTick?.cancel();
     _slN.dispose();
     _gateT?.cancel();
+    _tvT?.cancel();
+    _tvMsg.dispose();
     _epSc.dispose();
     stack.remove(this);
     _wake(false);
@@ -5592,7 +5599,113 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   bool get _land => MediaQuery.of(context).orientation == Orientation.landscape;
 
+  final _tvMsg = ValueNotifier<String>('');
+  Timer? _tvT;
+  void _tvSay(String m) {
+    _tvMsg.value = m;
+    _tvT?.cancel();
+    _tvT = Timer(const Duration(milliseconds: 1400), () => _tvMsg.value = '');
+  }
+
+  String _mmss(Duration d) {
+    final m = d.inMinutes, sec = d.inSeconds % 60;
+    final h = m ~/ 60;
+    String t(int n) => n.toString().padLeft(2, '0');
+    return h > 0 ? '$h:${t(m % 60)}:${t(sec)}' : '${t(m)}:${t(sec)}';
+  }
+
+  /// remote TV: OK = jeda/putar, kiri/kanan = mundur/maju 10 detik
+  KeyEventResult _tvKey(FocusNode n, KeyEvent e) {
+    final c = vc;
+    if (c == null || !c.value.isInitialized || e is KeyUpEvent) {
+      return KeyEventResult.ignored;
+    }
+    final k = e.logicalKey;
+    void seek(int sec) {
+      final d = c.value.duration;
+      var t = c.value.position + Duration(seconds: sec);
+      if (t < Duration.zero) t = Duration.zero;
+      if (t > d) t = d;
+      c.seekTo(t);
+      _tvSay('${sec < 0 ? '⏪' : '⏩'} ${_mmss(t)} / ${_mmss(d)}');
+    }
+
+    if (k == LogicalKeyboardKey.select ||
+        k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter ||
+        k == LogicalKeyboardKey.gameButtonA ||
+        k == LogicalKeyboardKey.mediaPlayPause) {
+      if (e is KeyRepeatEvent) return KeyEventResult.handled;
+      if (c.value.isPlaying) {
+        c.pause();
+        _tvSay('⏸ Jeda');
+      } else {
+        c.play();
+        _tvSay('▶ Putar');
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaPlay) {
+      c.play();
+      _tvSay('▶ Putar');
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaPause) {
+      c.pause();
+      _tvSay('⏸ Jeda');
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.mediaRewind) {
+      seek(-10);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight ||
+        k == LogicalKeyboardKey.mediaFastForward) {
+      seek(10);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   Widget _video() {
+    final v = _video0();
+    if (!isTv || cc == null) return v;
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _tvKey,
+      child: Stack(fit: StackFit.expand, children: [
+        v,
+        Positioned(
+          top: 14,
+          left: 0,
+          right: 0,
+          child: IgnorePointer(
+            child: ValueListenableBuilder<String>(
+              valueListenable: _tvMsg,
+              builder: (_, m, __) => m.isEmpty
+                  ? const SizedBox.shrink()
+                  : Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(20)),
+                        child: Text(m,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _video0() {
     if (_gate) return _gateView();
     if (loading) return const PlayerSkel();
     if (err != null) {
