@@ -1140,6 +1140,7 @@ Widget poster(String url, {double radius = 14}) => ClipRRect(
           : CachedNetworkImage(
               imageUrl: url,
               fit: BoxFit.cover,
+              memCacheWidth: 420,
               placeholder: (_, __) => Container(color: cardc),
               errorWidget: (_, __, ___) => Container(color: cardc),
             ),
@@ -1273,16 +1274,24 @@ class GroupCard extends StatelessWidget {
 const _ttStyle = TextStyle(fontSize: 12.5, height: 1.25);
 
 /// jumlah baris judul terpanjang (judul ditampilkan utuh, tidak dipotong)
+final Map<String, int> _tlCache = {};
 int titleLines(BuildContext c, Iterable<Group> gs, double w) {
   var mx = 1;
   final sc = MediaQuery.textScalerOf(c);
+  final sf = sc.scale(10);
   for (final g in gs) {
-    final tp = TextPainter(
-        text: TextSpan(text: g.title, style: _ttStyle),
-        textDirection: TextDirection.ltr,
-        textScaler: sc)
-      ..layout(maxWidth: w);
-    final n = tp.computeLineMetrics().length;
+    final key = '${g.title}|${w.round()}|$sf';
+    var n = _tlCache[key];
+    if (n == null) {
+      final tp = TextPainter(
+          text: TextSpan(text: g.title, style: _ttStyle),
+          textDirection: TextDirection.ltr,
+          textScaler: sc)
+        ..layout(maxWidth: w);
+      n = tp.computeLineMetrics().length;
+      if (_tlCache.length > 3000) _tlCache.clear();
+      _tlCache[key] = n;
+    }
     if (n > mx) mx = n;
   }
   return mx;
@@ -1497,7 +1506,21 @@ class _TapS extends State<Tap> {
   }
 
   @override
-  Widget build(BuildContext context) => FocusableActionDetector(
+  Widget build(BuildContext context) => isTv ? _tv(context) : _touch();
+
+  Widget _touch() => GestureDetector(
+        onTapDown: (_) => _s(true),
+        onTapUp: (_) => _s(false),
+        onTapCancel: () => _s(false),
+        onTap: widget.onTap == null ? null : _go,
+        child: AnimatedScale(
+            scale: d ? (ultra ? .94 : .96) : 1,
+            duration: const Duration(milliseconds: 110),
+            curve: Curves.easeOut,
+            child: widget.child),
+      );
+
+  Widget _tv(BuildContext context) => FocusableActionDetector(
         enabled: widget.onTap != null,
         onShowFocusHighlight: (v) {
           if (mounted && f != v) setState(() => f = v);
@@ -3442,7 +3465,7 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  final pc = PageController(viewportFraction: .62);
+  final pc = PageController();
   Timer? t;
   List<Group> hero = [];
   int heroI = 0;
@@ -3569,13 +3592,16 @@ class _HomeTabState extends State<HomeTab> {
         const SizedBox(height: 14),
         if (hero.isNotEmpty)
           SizedBox(
-            height: 340,
+            height: 450,
             child: PageView(
               controller: pc,
+              physics: const NeverScrollableScrollPhysics(),
               onPageChanged: (v) => setState(() => heroI = v),
               children: hero
                   .map((g) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: max(0.0,
+                              (MediaQuery.of(context).size.width - 28 - 300) / 2)),
                       child: Tap(
                         onTap: () => openDetail(context, g),
                         child: Stack(fit: StackFit.expand, children: [
@@ -3727,7 +3753,7 @@ class PopularTab extends StatefulWidget {
 }
 
 class _PopularTabState extends State<PopularTab> {
-  bool week = true;
+  bool week = false;
   @override
   Widget build(BuildContext context) {
     final m = (week && App.wk.isNotEmpty) ? App.wk : App.vc;
@@ -3743,12 +3769,6 @@ class _PopularTabState extends State<PopularTab> {
         const Text('🔥 Populer',
             style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
-        Row(children: [
-          chipB('Minggu Ini', week, () => setState(() => week = true)),
-          const SizedBox(width: 8),
-          chipB('Sepanjang Masa', !week, () => setState(() => week = false)),
-        ]),
-        const SizedBox(height: 12),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 380),
           transitionBuilder: swapT,
@@ -4043,7 +4063,6 @@ class LibraryTab extends StatelessWidget {
               ]),
             ),
           ),
-        backupCard(context),
       ],
     );
   }
