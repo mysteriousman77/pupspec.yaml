@@ -3441,6 +3441,7 @@ class _RootState extends State<Root> {
               }
             },
             child: Scaffold(
+            resizeToAvoidBottomInset: false,
             body: Stack(children: [
               const Positioned.fill(child: GlowBg()),
               SafeArea(bottom: false, child: body),
@@ -3680,7 +3681,7 @@ class _HomeTabState extends State<HomeTab> {
         pickerCard(context),
         const MilestoneCard(),
         if (hs.isNotEmpty)
-          section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList(),
+          section('Lanjutkan Nonton', hs.map((e) => ResumeX(e)).toList(),
               h: 132 * 1.5 +
                   6 +
                   titleLines(
@@ -3699,6 +3700,48 @@ class _HomeTabState extends State<HomeTab> {
       ],
     );
   }
+}
+
+/// kartu "Lanjutkan Nonton" + tombol x (hapus dari riwayat, dengan peringatan)
+class ResumeX extends StatelessWidget {
+  final Ep e;
+  const ResumeX(this.e, {super.key});
+  @override
+  Widget build(BuildContext context) => Stack(children: [
+        ResumeCard(e),
+        Positioned(
+          top: 4,
+          right: 4,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (c) => AlertDialog(
+                  title: const Text('Hapus dari Lanjutkan Nonton?'),
+                  content: Text(
+                      '"${e.title}${e.eps.isEmpty ? '' : ' - ${e.eps}'}" akan dihapus dari riwayat tontonmu. Posisi terakhir menonton ikut hilang.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(c, false),
+                        child: const Text('Batal')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(c, true),
+                        child: const Text('Hapus')),
+                  ],
+                ),
+              );
+              if (ok == true) Store.removeHist(e.key);
+            },
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: const BoxDecoration(
+                  color: Colors.black54, shape: BoxShape.circle),
+              child: const Icon(Icons.close, size: 16, color: Colors.white),
+            ),
+          ),
+        ),
+      ]);
 }
 
 class ResumeCard extends StatelessWidget {
@@ -3838,6 +3881,7 @@ class CatalogTab extends StatefulWidget {
 
 class _CatalogTabState extends State<CatalogTab> {
   String q = '', cat = 'all';
+  Timer? _qt;
   int pg = 0;
   static const per = 12;
   final _sc = ScrollController();
@@ -3862,6 +3906,7 @@ class _CatalogTabState extends State<CatalogTab> {
 
   @override
   void dispose() {
+    _qt?.cancel();
     App.catReq.removeListener(_req);
     _sc.dispose();
     super.dispose();
@@ -3935,10 +3980,17 @@ class _CatalogTabState extends State<CatalogTab> {
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
       child: Column(children: [
         TextField(
-          onChanged: (v) => setState(() {
-            q = v.toLowerCase().trim();
-            pg = 0;
-          }),
+          onChanged: (v) {
+            // tunda penyaringan supaya mengetik tetap lancar
+            _qt?.cancel();
+            _qt = Timer(const Duration(milliseconds: 250), () {
+              if (!mounted) return;
+              setState(() {
+                q = v.toLowerCase().trim();
+                pg = 0;
+              });
+            });
+          },
           decoration: InputDecoration(
             hintText: 'Cari judul...',
             prefixIcon: const Icon(Icons.search),
@@ -4000,8 +4052,6 @@ class LibraryTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bm = Store.bms.map((t) => App.gm[t]).whereType<Group>().toList();
-    final hs =
-        Store.hist.map((h) => App.byKey[h['key']]).whereType<Ep>().toList();
     return ListView(
       padding: EdgeInsets.fromLTRB(14, 14, 14, navPad),
       children: [
@@ -4020,47 +4070,6 @@ class LibraryTab extends StatelessWidget {
               itemCount: bm.length,
               gridDelegate: gridD(context, c.maxWidth, bm),
               itemBuilder: (_, i) => GroupCard(bm[i]),
-            ),
-          ),
-        const SizedBox(height: 20),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('Riwayat Tonton',
-              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
-          if (hs.isNotEmpty)
-            TextButton(
-                onPressed: () => confirmClear(context),
-                child: const Text('Hapus Semua')),
-        ]),
-        const SizedBox(height: 10),
-        if (hs.isEmpty)
-          const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: Text('Belum ada riwayat.')))
-        else
-          SizedBox(
-            height: 160,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: hs.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (_, i) => Stack(children: [
-                ResumeCard(hs[i]),
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => Store.removeHist(hs[i].key),
-                    child: Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: const BoxDecoration(
-                          color: Colors.black54, shape: BoxShape.circle),
-                      child: const Icon(Icons.close,
-                          size: 15, color: Colors.white),
-                    ),
-                  ),
-                ),
-              ]),
             ),
           ),
       ],
