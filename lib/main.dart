@@ -1246,7 +1246,7 @@ class GroupCard extends StatelessWidget {
           width: width,
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             AspectRatio(
-              aspectRatio: 16 / 9,
+              aspectRatio: 2 / 3,
               child: Stack(fit: StackFit.expand, children: [
                 poster(g.thumb),
                 Positioned(top: 6, left: 6, child: pill(g.cat)),
@@ -1264,13 +1264,39 @@ class GroupCard extends StatelessWidget {
               ]),
             ),
             const SizedBox(height: 6),
-            Text(g.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, height: 1.25)),
+            Text(g.title, style: _ttStyle),
           ]),
         ),
       ));
+}
+
+const _ttStyle = TextStyle(fontSize: 12.5, height: 1.25);
+
+/// jumlah baris judul terpanjang (judul ditampilkan utuh, tidak dipotong)
+int titleLines(BuildContext c, Iterable<Group> gs, double w) {
+  var mx = 1;
+  final sc = MediaQuery.textScalerOf(c);
+  for (final g in gs) {
+    final tp = TextPainter(
+        text: TextSpan(text: g.title, style: _ttStyle),
+        textDirection: TextDirection.ltr,
+        textScaler: sc)
+      ..layout(maxWidth: w);
+    final n = tp.computeLineMetrics().length;
+    if (n > mx) mx = n;
+  }
+  return mx;
+}
+
+double cardH(BuildContext c, Iterable<Group> gs, double w) =>
+    w * 1.5 + 6 + titleLines(c, gs, w) * 15.7 + 6;
+
+/// baris slider poster potret
+Widget gsection(BuildContext c, String title, List<Group> gs,
+    {VoidCallback? more}) {
+  const w = 132.0;
+  return section(title, gs.map((g) => GroupCard(g, width: w)).toList(),
+      h: cardH(c, gs, w), more: more);
 }
 
 Widget section(String title, List<Widget> kids,
@@ -1302,27 +1328,25 @@ Widget section(String title, List<Widget> kids,
       ],
     );
 
-Widget recSection(Group g) {
+Widget recSection(BuildContext c, Group g) {
   final r = App.recsFor(g);
   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     if (r.rel.isNotEmpty)
-      section('Season & Seri Terkait',
-          r.rel.map((x) => GroupCard(x, width: 190)).toList()),
+      gsection(c, 'Season & Seri Terkait', r.rel),
     if (r.more.isNotEmpty)
-      section('Rekomendasi Lainnya',
-          r.more.map((x) => GroupCard(x, width: 190)).toList()),
+      gsection(c, 'Rekomendasi Lainnya', r.more),
   ]);
 }
 
 /// grid dengan tinggi sel pasti (poster 16:9 + judul 2 baris)
-SliverGridDelegate gridD(double w) {
-  final cols = w >= 700 ? 4 : (w >= 480 ? 3 : 2);
+SliverGridDelegate gridD(BuildContext c, double w, Iterable<Group> gs) {
+  final cols = w >= 900 ? 6 : (w >= 700 ? 5 : (w >= 480 ? 4 : 3));
   final cw = (w - 12 * (cols - 1)) / cols;
   return SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: cols,
       crossAxisSpacing: 12,
       mainAxisSpacing: 14,
-      mainAxisExtent: cw * 9 / 16 + 6 + 36);
+      mainAxisExtent: cardH(c, gs, cw));
 }
 
 void goCat(String c) {
@@ -1385,8 +1409,6 @@ Widget t10Item(BuildContext c, int i, Group g, int v) {
               right: 8,
               bottom: 7,
               child: Text(g.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 11,
@@ -2761,19 +2783,19 @@ class _PickerS extends State<PickerSheet> {
                 scale: spin ? .94 : 1,
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOutBack,
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
+                child: SizedBox(
+                  width: 190,
+                  child: AspectRatio(
+                  aspectRatio: 2 / 3,
                   child: Stack(fit: StackFit.expand, children: [
                     poster(x.thumb, radius: 18),
                     Positioned(top: 8, left: 8, child: pill(x.cat)),
                   ]),
-                ),
+                )),
               ),
               const SizedBox(height: 12),
               Text(x.title,
-                  maxLines: 2,
                   textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               Text(
@@ -3420,7 +3442,7 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  final pc = PageController();
+  final pc = PageController(viewportFraction: .62);
   Timer? t;
   List<Group> hero = [];
   int heroI = 0;
@@ -3497,7 +3519,7 @@ class _HomeTabState extends State<HomeTab> {
       ..sort((a, b) => by[b]!.length.compareTo(by[a]!.length));
     return [
       for (final k in ks.take(10))
-        section(k, by[k]!.take(12).map((g) => GroupCard(g, width: 190)).toList())
+        gsection(context, k, by[k]!.take(12).toList())
     ];
   }
 
@@ -3547,12 +3569,14 @@ class _HomeTabState extends State<HomeTab> {
         const SizedBox(height: 14),
         if (hero.isNotEmpty)
           SizedBox(
-            height: 210,
+            height: 340,
             child: PageView(
               controller: pc,
               onPageChanged: (v) => setState(() => heroI = v),
               children: hero
-                  .map((g) => Tap(
+                  .map((g) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Tap(
                         onTap: () => openDetail(context, g),
                         child: Stack(fit: StackFit.expand, children: [
                           poster(g.thumb, radius: 20),
@@ -3607,7 +3631,7 @@ class _HomeTabState extends State<HomeTab> {
                                 ]),
                           ),
                         ]),
-                      ))
+                      )))
                   .toList(),
             ),
           ),
@@ -3631,12 +3655,19 @@ class _HomeTabState extends State<HomeTab> {
         const MilestoneCard(),
         if (hs.isNotEmpty)
           section('Lanjutkan Nonton', hs.map((e) => ResumeCard(e)).toList(),
+              h: 132 * 1.5 +
+                  6 +
+                  titleLines(
+                          context,
+                          hs.map((e) => App.gm[e.title]).whereType<Group>(),
+                          132) *
+                      15.7 +
+                  6,
               auto: false,
               more: () => App.tab.value = 3),
         top10(),
         if (latest.isNotEmpty)
-          section('Film',
-              latest.take(12).map((g) => GroupCard(g, width: 190)).toList(),
+          gsection(context, 'Film', latest.take(12).toList(),
               more: () => goCat('all')),
         for (final gr in genreRows(latest)) gr,
       ],
@@ -3654,10 +3685,10 @@ class ResumeCard extends StatelessWidget {
     return Tap(
       onTap: () => playEp(context, e),
       child: SizedBox(
-        width: 190,
+        width: 132,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           AspectRatio(
-            aspectRatio: 16 / 9,
+            aspectRatio: 2 / 3,
             child: Stack(fit: StackFit.expand, children: [
               poster(g?.thumb ?? e.thumb),
               Positioned(
@@ -3681,10 +3712,7 @@ class ResumeCard extends StatelessWidget {
             ]),
           ),
           const SizedBox(height: 6),
-          Text(e.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, height: 1.25)),
+          Text(e.title, style: _ttStyle),
         ]),
       ),
     );
@@ -3928,7 +3956,7 @@ class _CatalogTabState extends State<CatalogTab> {
                         controller: _sc,
                         slivers: [
                           SliverGrid(
-                            gridDelegate: gridD(c.maxWidth),
+                            gridDelegate: gridD(context, c.maxWidth, part),
                             delegate: SliverChildBuilderDelegate(
                                 (_, i) => GroupCard(part[i]),
                                 childCount: part.length),
@@ -3970,7 +3998,7 @@ class LibraryTab extends StatelessWidget {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: bm.length,
-              gridDelegate: gridD(c.maxWidth),
+              gridDelegate: gridD(context, c.maxWidth, bm),
               itemBuilder: (_, i) => GroupCard(bm[i]),
             ),
           ),
@@ -4230,8 +4258,8 @@ class ProfileTab extends StatelessWidget {
                             fontWeight: FontWeight.w800,
                             color: i == 0 ? accent : mut))),
                 SizedBox(
-                    width: 46,
-                    height: 46,
+                    width: 44,
+                    height: 64,
                     child: poster(App.gm[tt[i].key]?.thumb ?? '', radius: 10)),
                 const SizedBox(width: 10),
                 Expanded(
@@ -4746,7 +4774,7 @@ class _DetailPageState extends State<DetailPage> {
       body: CustomScrollView(slivers: [
         SliverAppBar(
           pinned: true,
-          expandedHeight: 300,
+          expandedHeight: 500,
           backgroundColor: bgc,
           automaticallyImplyLeading: false,
           leading: Padding(
@@ -4964,7 +4992,7 @@ class _DetailPageState extends State<DetailPage> {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 30),
-            child: recSection(g),
+            child: recSection(context, g),
           ),
         ),
       ]),
@@ -5850,7 +5878,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   ),
                 ),
               ],
-              if (g != null) recSection(g),
+              if (g != null) recSection(context, g),
       ]);
 
   Ep? _sib(int d) {
