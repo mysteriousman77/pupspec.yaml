@@ -90,7 +90,7 @@ Color get onAc => accent.computeLuminance() > .45 ? Colors.black : Colors.white;
 
 /// Ultra = efek kaca & animasi penuh. Lite = animasi & kaca dikurangi (navigasi bawah tetap kaca)
 final fxUltra = ValueNotifier<bool>(true);
-bool get ultra => fxUltra.value;
+bool get ultra => false; // animasi & efek kaca dimatikan (ringan)
 void setFx(bool v) {
   Store.p.setBool('ultra', v);
   fxUltra.value = v;
@@ -1159,7 +1159,7 @@ Widget chipB(String label, bool sel, VoidCallback onTap, {IconData? icon}) =>
     Tap(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration.zero,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
         decoration: BoxDecoration(
             color: sel ? accent : (ultra ? null : fg.withOpacity(.06)),
@@ -1513,11 +1513,7 @@ class _TapS extends State<Tap> {
         onTapUp: (_) => _s(false),
         onTapCancel: () => _s(false),
         onTap: widget.onTap == null ? null : _go,
-        child: AnimatedScale(
-            scale: d ? (ultra ? .94 : .96) : 1,
-            duration: const Duration(milliseconds: 110),
-            curve: Curves.easeOut,
-            child: widget.child),
+        child: widget.child,
       );
 
   Widget _tv(BuildContext context) => FocusableActionDetector(
@@ -1615,11 +1611,11 @@ class FloatNav extends StatelessWidget {
       alignment: Alignment.center,
       child: AnimatedScale(
         scale: sel ? 1.08 : 1,
-        duration: const Duration(milliseconds: 260),
+        duration: const Duration.zero,
         curve: Curves.easeOutBack,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
+            duration: const Duration.zero,
             transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
             child: Icon(sel ? ic[1] as IconData : ic[0] as IconData,
                 key: ValueKey(sel),
@@ -1628,7 +1624,7 @@ class FloatNav extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 220),
+            duration: const Duration.zero,
             style: TextStyle(
                 fontSize: 10.5,
                 fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
@@ -1676,7 +1672,7 @@ class FloatNav extends StatelessWidget {
                 final w = bc.maxWidth / 5;
                 return Stack(children: [
                   AnimatedPositioned(
-                    duration: const Duration(milliseconds: 420),
+                    duration: const Duration.zero,
                     curve: Curves.easeOutBack,
                     left: i * w + 5,
                     top: 7,
@@ -1712,22 +1708,7 @@ class TabSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
         for (var k = 0; k < children.length; k++)
-          IgnorePointer(
-            ignoring: k != index,
-            child: AnimatedSlide(
-              offset: k == index
-                  ? Offset.zero
-                  : Offset(k < index ? -.07 : .07, 0),
-              duration: const Duration(milliseconds: 340),
-              curve: Curves.easeOutCubic,
-              child: AnimatedOpacity(
-                opacity: k == index ? 1 : 0,
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeOut,
-                child: children[k],
-              ),
-            ),
-          ),
+          Offstage(offstage: k != index, child: children[k]),
       ]);
 }
 
@@ -2207,7 +2188,9 @@ Widget swapT(Widget c, Animation<double> a) => FadeTransition(
         child: c));
 
 /// baris muncul berurutan (makin bawah makin telat sedikit)
-Widget fxAt(int i, Widget c) => TweenAnimationBuilder<double>(
+Widget fxAt(int i, Widget c) => c;
+
+Widget _fxAtOld(int i, Widget c) => TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: 320 + min(i, 10) * 55),
       curve: Curves.easeOutCubic,
@@ -3693,10 +3676,39 @@ class _HomeTabState extends State<HomeTab> {
               auto: false,
               more: () => App.tab.value = 3),
         top10(),
-        if (latest.isNotEmpty)
-          gsection(context, 'Film', latest.take(12).toList(),
-              more: () => goCat('all')),
-        for (final gr in genreRows(latest)) gr,
+        if (latest.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(2, 18, 2, 10),
+            child: Text('Film Terbaru',
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w500)),
+          ),
+          LayoutBuilder(builder: (_, c) {
+            final l = latest.take(30).toList();
+            return GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: l.length,
+              gridDelegate: gridD(context, c.maxWidth, l),
+              itemBuilder: (_, i) => GroupCard(l[i]),
+            );
+          }),
+          const SizedBox(height: 14),
+          Tap(
+            onTap: () => goCat('all'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: accent.withOpacity(.6))),
+              child: Text('Lihat Semua Film',
+                  style: TextStyle(
+                      color: accent,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14)),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -3813,7 +3825,7 @@ class _PopularTabState extends State<PopularTab> {
             style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 380),
+          duration: Duration.zero,
           transitionBuilder: swapT,
           child: Column(
               key: ValueKey('$week-${top.isEmpty}'),
@@ -4014,7 +4026,7 @@ class _CatalogTabState extends State<CatalogTab> {
         ),
         Expanded(
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 380),
+            duration: Duration.zero,
             transitionBuilder: swapT,
             child: KeyedSubtree(
               key: ValueKey(cat),
@@ -4495,7 +4507,6 @@ class ProfileTab extends StatelessWidget {
             ]),
           ),
           const SizedBox(height: 8),
-          _fxCard(),
           _theme(),
           const SizedBox(height: 8),
           Tap(
