@@ -12,6 +12,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -447,7 +449,11 @@ jobs:
             echo "KEYSTORE_B64 belum diisi: APK memakai kunci acak (update harus uninstall dulu)"
           fi
 
-      - uses: actions/upload-artifact@v6
-        with:
-          name: lesehantv-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+      # APK dikirim ke Releases (tidak memakai kuota penyimpanan Actions), simpan 3 terakhir
+      - name: Publikasikan APK ke Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" build/app/outputs/flutter-apk/app-release.apk --title "LesehanTV build ${{ github.run_number }}" --notes "APK build ${{ github.run_number }}" --target "$GITHUB_SHA"
+          gh release list --limit 100 --json tagName --jq '.[3:][].tagName' | xargs -r -I{} gh release delete {} --cleanup-tag --yes
